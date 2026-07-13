@@ -15,6 +15,7 @@ Salto — rotation scheduling for gymnastics gyms. Auto-generates conflict-free 
 - `npm run test:watch` — run tests in watch mode
 - `npx vitest run path/to/file.test.ts` — run a single test file
 - `npx vitest run -t "test name"` — run tests matching a name
+- `npm run test:e2e` — Playwright smoke tests (`e2e/`); boots its own production build on port 3456 with a throwaway DB (`.e2e-data/`). One-time setup: `npx playwright install chromium`, plus `sudo npx playwright install-deps chromium` on bare hosts. Not part of `npm test`.
 - `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build` — build and run the container from local sources (plain `docker compose up -d` pulls the published GHCR image instead)
 
 ## Conventions

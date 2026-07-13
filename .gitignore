@@ -41,6 +41,11 @@ lerna-debug.log*
 *.tsbuildinfo
 .cache/
 
+# E2E artifacts
+.e2e-data/
+test-results/
+playwright-report/
+
 # Local reference assets (photos etc.) — never publish
 IMG_*
 *.heic
