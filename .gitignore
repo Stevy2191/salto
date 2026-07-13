@@ -9,6 +9,9 @@ build/
 # Test coverage
 coverage/
 
+# Local SQLite data
+data/
+
 # Logs
 logs/
 *.log
