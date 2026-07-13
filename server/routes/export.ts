@@ -15,10 +15,14 @@ const DAY_NAMES = [
   'Saturday',
 ] as const
 
-/** Yellow highlight for the group header row (matches gyms' hand-made sheets). */
-const HEADER_FILL = '#FFF2CC'
-/** Light gray for the time column. */
-const TIME_FILL = '#F2F2F2'
+// Styling matched to the reference sheet (hand-made gym schedule photo):
+// bright yellow group header, medium-gray time column, thin black gridlines
+// through blocks with medium borders at block boundaries, labels flush left.
+const HEADER_FILL = '#FFFF00'
+const TIME_FILL = '#BFBFBF'
+
+const thin = { style: 'thin' as const }
+const medium = { style: 'medium' as const }
 
 interface SessionRow {
   id: number
@@ -190,14 +194,29 @@ export function exportRoutes(db: DatabaseSync): Router {
     headerRow.getCell(1).fill = solidFill(TIME_FILL)
     headerRow.getCell(1).font = { bold: true }
     headerRow.getCell(1).alignment = { horizontal: 'right' }
+    headerRow.getCell(1).border = { top: thin, left: thin, right: thin, bottom: medium }
     columnGroupIds.forEach((groupId, i) => {
       const cell = headerRow.getCell(i + 2)
       cell.value = groupNamesById.get(groupId)!
       cell.fill = solidFill(HEADER_FILL)
       cell.font = { bold: true }
-      cell.alignment = { horizontal: 'center' }
-      cell.border = { bottom: { style: 'medium' } }
+      cell.alignment = { horizontal: 'left' }
+      cell.border = { top: thin, left: thin, right: thin, bottom: medium }
     })
+
+    // Full grid of thin black borders first — the reference sheet shows
+    // gridlines even through blocks and empty cells; block boundaries get
+    // heavier edges in the block pass below.
+    for (let slot = 0; slot < slots; slot++) {
+      for (let c = 1; c <= columnCount; c++) {
+        sheet.getRow(FIRST_SLOT_ROW + slot).getCell(c).border = {
+          top: thin,
+          left: thin,
+          right: thin,
+          bottom: thin,
+        }
+      }
+    }
 
     // Time column: full time on the hour, ":MM" between hours.
     for (let slot = 0; slot < slots; slot++) {
@@ -230,16 +249,16 @@ export function exportRoutes(db: DatabaseSync): Router {
           if (offset === 0) {
             cell.value = block.label
             cell.font = font
-            cell.alignment = { horizontal: 'center', vertical: 'top', wrapText: true }
+            cell.alignment = { horizontal: 'left', vertical: 'top', wrapText: true }
           }
           cell.fill = solidFill(block.color)
-          // Thick top/bottom edges mark block boundaries even between
-          // same-colored neighbors; thin sides keep columns crisp.
+          // Medium top/bottom edges mark block boundaries even between
+          // same-colored neighbors; thin gridlines continue inside blocks.
           cell.border = {
-            left: { style: 'thin' },
-            right: { style: 'thin' },
-            ...(offset === 0 ? { top: { style: 'medium' } } : {}),
-            ...(offset === block.length - 1 ? { bottom: { style: 'medium' } } : {}),
+            left: thin,
+            right: thin,
+            top: offset === 0 ? medium : thin,
+            bottom: offset === block.length - 1 ? medium : thin,
           }
         }
       }

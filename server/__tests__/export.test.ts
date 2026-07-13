@@ -24,6 +24,13 @@ function binaryParser(res: Response, cb: (err: Error | null, body: Buffer) => vo
   res.on('end', () => cb(null, Buffer.concat(chunks)))
 }
 
+/** Bordered-but-empty cells read back as pattern 'none' — not a solid fill. */
+function expectUnfilled(cell: ExcelJS.Cell) {
+  const fill = cell.fill
+  const solid = fill !== undefined && fill.type === 'pattern' && fill.pattern === 'solid'
+  expect(solid).toBe(false)
+}
+
 async function downloadSheet(): Promise<{ res: request.Response; sheet: ExcelJS.Worksheet }> {
   const res = await request(app)
     .get(`/api/sessions/${sessionId}/export`)
@@ -109,7 +116,8 @@ describe('Excel export', () => {
     expect(sheet.getCell('C3').value).toBe('Boys Team')
     for (const ref of ['B3', 'C3']) {
       expect(sheet.getCell(ref).font?.bold).toBe(true)
-      expect(sheet.getCell(ref).fill).toMatchObject({ fgColor: { argb: 'FFFFF2CC' } })
+      expect(sheet.getCell(ref).alignment?.horizontal).toBe('left')
+      expect(sheet.getCell(ref).fill).toMatchObject({ fgColor: { argb: 'FFFFFF00' } })
     }
   })
 
@@ -123,7 +131,7 @@ describe('Excel export', () => {
       const cell = sheet.getCell(ref)
       expect(cell.font?.bold).toBe(true)
       expect(cell.alignment?.horizontal).toBe('right')
-      expect(cell.fill).toMatchObject({ fgColor: { argb: 'FFF2F2F2' } })
+      expect(cell.fill).toMatchObject({ fgColor: { argb: 'FFBFBFBF' } })
     }
   })
 
@@ -142,13 +150,25 @@ describe('Excel export', () => {
     expect(sheet.getCell('B5').fill).toMatchObject({ fgColor: { argb: 'FFE15759' } })
 
     // Thick borders mark the block boundary: top of the first cell,
-    // bottom of the last — so back-to-back blocks stay distinguishable.
+    // bottom of the last — so back-to-back blocks stay distinguishable —
+    // while thin gridlines continue inside the block (as in the photo).
     expect(sheet.getCell('B4').border?.top?.style).toBe('medium')
+    expect(sheet.getCell('B5').border?.top?.style).toBe('thin')
     expect(sheet.getCell('B5').border?.bottom?.style).toBe('medium')
     // The next block (Beam, rows 6–7) starts with its own thick edge.
     expect(sheet.getCell('B6').value).toBe('Beam')
     expect(sheet.getCell('B6').border?.top?.style).toBe('medium')
+    expect(sheet.getCell('B6').alignment?.horizontal).toBe('left')
     expect(sheet.getCell('B7').value).toBeNull()
+  })
+
+  it('keeps thin gridlines on empty cells', async () => {
+    const { sheet } = await downloadSheet()
+    // Group B is idle at 16:00 — bordered but unfilled, like the photo.
+    const cell = sheet.getCell('C4')
+    expectUnfilled(cell)
+    expect(cell.border?.top?.style).toBe('thin')
+    expect(cell.border?.left?.style).toBe('thin')
   })
 
   it('renders each group column independently with staggered boundaries', async () => {
@@ -156,14 +176,14 @@ describe('Excel export', () => {
 
     // Group B starts at :15 while Group A is mid-block.
     expect(sheet.getCell('C4').value).toBeNull()
-    expect(sheet.getCell('C4').fill?.type ?? 'none').not.toBe('pattern')
+    expectUnfilled(sheet.getCell('C4'))
     expect(sheet.getCell('C5').value).toBe('Beam')
     expect(sheet.getCell('C5').border?.top?.style).toBe('medium')
     expect(sheet.getCell('C6').value).toBeNull()
     expect(sheet.getCell('C6').fill).toMatchObject({ fgColor: { argb: 'FFEDC948' } })
     expect(sheet.getCell('C6').border?.bottom?.style).toBe('medium')
     expect(sheet.getCell('C7').value).toBeNull()
-    expect(sheet.getCell('C7').fill?.type ?? 'none').not.toBe('pattern')
+    expectUnfilled(sheet.getCell('C7'))
   })
 
   it('picks white or black text from the fill brightness', async () => {
