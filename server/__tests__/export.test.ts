@@ -11,11 +11,12 @@ let cookie: string
 let sessionId: number
 let vaultId: number
 let beamId: number
-let groupId: number
+let groupAId: number
+let groupBId: number
 let coachId: number
 
-const VAULT_COLOR = '#E15759'
-const BEAM_COLOR = '#EDC948'
+const VAULT_COLOR = '#E15759' // medium-dark → white text
+const BEAM_COLOR = '#EDC948' // light → black text
 
 function binaryParser(res: Response, cb: (err: Error | null, body: Buffer) => void) {
   const chunks: Buffer[] = []
@@ -23,7 +24,7 @@ function binaryParser(res: Response, cb: (err: Error | null, body: Buffer) => vo
   res.on('end', () => cb(null, Buffer.concat(chunks)))
 }
 
-async function downloadWorkbook(): Promise<{ res: request.Response; sheet: ExcelJS.Worksheet }> {
+async function downloadSheet(): Promise<{ res: request.Response; sheet: ExcelJS.Worksheet }> {
   const res = await request(app)
     .get(`/api/sessions/${sessionId}/export`)
     .set('Cookie', cookie)
@@ -32,9 +33,7 @@ async function downloadWorkbook(): Promise<{ res: request.Response; sheet: Excel
   expect(res.status).toBe(200)
   const workbook = new ExcelJS.Workbook()
   await workbook.xlsx.load(res.body as Buffer)
-  const sheet = workbook.worksheets[0]!
-  expect(sheet).toBeDefined()
-  return { res, sheet }
+  return { res, sheet: workbook.worksheets[0]! }
 }
 
 beforeEach(async () => {
@@ -49,15 +48,18 @@ beforeEach(async () => {
     await request(app)
       .post('/api/events')
       .set('Cookie', cookie)
-      .send({ name: 'Beam', color: BEAM_COLOR })
+      .send({ name: 'Beam', color: BEAM_COLOR, capacity: 2 })
   ).body.event.id
-  groupId = (
+  groupAId = (
     await request(app).post('/api/groups').set('Cookie', cookie).send({ name: 'Level 3 Girls' })
+  ).body.group.id
+  groupBId = (
+    await request(app).post('/api/groups').set('Cookie', cookie).send({ name: 'Boys Team' })
   ).body.group.id
   coachId = (
     await request(app).post('/api/coaches').set('Cookie', cookie).send({ name: 'Dana Marsh' })
   ).body.coach.id
-  // 16:00–17:00 at 30 min → 2 slots
+  // 16:00–17:00 at 15 min → 4 slots (sheet rows 4–7).
   sessionId = (
     await request(app)
       .post('/api/sessions')
@@ -67,17 +69,23 @@ beforeEach(async () => {
         dayOfWeek: 1,
         startTime: '16:00',
         endTime: '17:00',
-        rotationLength: 30,
-        groups: [groupId],
+        rotationLength: 15,
+        groups: [groupAId, groupBId],
       })
   ).body.session.id
+  // Group A: Vault (2 slots, coached) then Beam (2 slots).
+  // Group B: Beam slots 1–2 — staggered against A's boundaries.
   await request(app)
     .put(`/api/sessions/${sessionId}/assignments`)
     .set('Cookie', cookie)
     .send({
       assignments: [
-        { slotIndex: 0, eventId: vaultId, groupId, coachId },
-        { slotIndex: 1, eventId: beamId, groupId, coachId: null },
+        { slotIndex: 0, eventId: vaultId, groupId: groupAId, coachId },
+        { slotIndex: 1, eventId: vaultId, groupId: groupAId, coachId },
+        { slotIndex: 2, eventId: beamId, groupId: groupAId, coachId: null },
+        { slotIndex: 3, eventId: beamId, groupId: groupAId, coachId: null },
+        { slotIndex: 1, eventId: beamId, groupId: groupBId, coachId: null },
+        { slotIndex: 2, eventId: beamId, groupId: groupBId, coachId: null },
       ],
     })
     .expect(200)
@@ -89,69 +97,100 @@ describe('Excel export', () => {
     await request(app).get('/api/sessions/999/export').set('Cookie', cookie).expect(404)
   })
 
-  it('downloads a valid xlsx with headers and layout', async () => {
-    const { res, sheet } = await downloadWorkbook()
-    expect(res.headers['content-type']).toContain('spreadsheetml')
+  it('lays out groups as columns and times as rows', async () => {
+    const { res, sheet } = await downloadSheet()
     expect(res.headers['content-disposition']).toContain('salto-monday-practice.xlsx')
 
     expect(sheet.getCell('A1').value).toBe('Monday Practice')
-    expect(String(sheet.getCell('A2').value)).toContain('Monday · 16:00–17:00 · 30-minute rotations')
+    expect(String(sheet.getCell('A2').value)).toContain('Monday · 16:00–17:00')
 
-    // Header row: Time | Vault | Beam. Time slots down column A.
-    expect(sheet.getCell('A3').value).toBe('Time')
-    expect(sheet.getCell('B3').value).toBe('Vault')
-    expect(sheet.getCell('C3').value).toBe('Beam')
-    expect(sheet.getCell('A4').value).toBe('16:00')
-    expect(sheet.getCell('A5').value).toBe('16:30')
+    // Group header row: names in bold on the yellow highlight.
+    expect(sheet.getCell('B3').value).toBe('Level 3 Girls')
+    expect(sheet.getCell('C3').value).toBe('Boys Team')
+    for (const ref of ['B3', 'C3']) {
+      expect(sheet.getCell(ref).font?.bold).toBe(true)
+      expect(sheet.getCell(ref).fill).toMatchObject({ fgColor: { argb: 'FFFFF2CC' } })
+    }
   })
 
-  it('fills cells with the event color and readable text', async () => {
-    const { sheet } = await downloadWorkbook()
+  it('labels time rows fully on the hour and compactly between', async () => {
+    const { sheet } = await downloadSheet()
+    expect(sheet.getCell('A4').value).toBe('16:00')
+    expect(sheet.getCell('A5').value).toBe(':15')
+    expect(sheet.getCell('A6').value).toBe(':30')
+    expect(sheet.getCell('A7').value).toBe(':45')
+    for (const ref of ['A4', 'A5', 'A6', 'A7']) {
+      const cell = sheet.getCell(ref)
+      expect(cell.font?.bold).toBe(true)
+      expect(cell.alignment?.horizontal).toBe('right')
+      expect(cell.fill).toMatchObject({ fgColor: { argb: 'FFF2F2F2' } })
+    }
+  })
 
-    // Header cells wear their event color.
-    const vaultHeader = sheet.getCell('B3')
-    expect(vaultHeader.fill).toMatchObject({
+  it('writes multi-slot blocks with the label only in the first cell', async () => {
+    const { sheet } = await downloadSheet()
+
+    // Group A's vault block spans rows 4–5.
+    expect(sheet.getCell('B4').value).toBe('Vault\nDana Marsh')
+    expect(sheet.getCell('B5').value).toBeNull()
+    // …but the continuation keeps the event's fill.
+    expect(sheet.getCell('B4').fill).toMatchObject({
       type: 'pattern',
       pattern: 'solid',
       fgColor: { argb: 'FFE15759' },
     })
+    expect(sheet.getCell('B5').fill).toMatchObject({ fgColor: { argb: 'FFE15759' } })
 
-    // Occupied cell: fill + contents + auto-contrast font.
-    const vaultCell = sheet.getCell('B4')
-    expect(vaultCell.value).toBe('Level 3 Girls — Dana Marsh')
-    expect(vaultCell.fill).toMatchObject({ fgColor: { argb: 'FFE15759' } })
-    // #E15759 is medium-dark → white text
-    expect(textColorFor(VAULT_COLOR)).toBe('#FFFFFF')
-    expect(vaultCell.font?.color?.argb).toBe('FFFFFFFF')
-
-    // Light yellow beam → black text; no coach listed.
-    const beamCell = sheet.getCell('C5')
-    expect(beamCell.value).toBe('Level 3 Girls')
-    expect(beamCell.fill).toMatchObject({ fgColor: { argb: 'FFEDC948' } })
-    expect(beamCell.font?.color?.argb).toBe('FF000000')
-
-    // Empty cells stay unfilled.
-    const emptyCell = sheet.getCell('C4')
-    expect(emptyCell.value).toBeNull()
-    expect(emptyCell.fill?.type ?? 'none').not.toBe('pattern')
+    // Thick borders mark the block boundary: top of the first cell,
+    // bottom of the last — so back-to-back blocks stay distinguishable.
+    expect(sheet.getCell('B4').border?.top?.style).toBe('medium')
+    expect(sheet.getCell('B5').border?.bottom?.style).toBe('medium')
+    // The next block (Beam, rows 6–7) starts with its own thick edge.
+    expect(sheet.getCell('B6').value).toBe('Beam')
+    expect(sheet.getCell('B6').border?.top?.style).toBe('medium')
+    expect(sheet.getCell('B7').value).toBeNull()
   })
 
-  it('stacks multiple groups in one cell when capacity allows', async () => {
-    const secondGroup = (
-      await request(app).post('/api/groups').set('Cookie', cookie).send({ name: 'Boys Team' })
-    ).body.group.id
+  it('renders each group column independently with staggered boundaries', async () => {
+    const { sheet } = await downloadSheet()
+
+    // Group B starts at :15 while Group A is mid-block.
+    expect(sheet.getCell('C4').value).toBeNull()
+    expect(sheet.getCell('C4').fill?.type ?? 'none').not.toBe('pattern')
+    expect(sheet.getCell('C5').value).toBe('Beam')
+    expect(sheet.getCell('C5').border?.top?.style).toBe('medium')
+    expect(sheet.getCell('C6').value).toBeNull()
+    expect(sheet.getCell('C6').fill).toMatchObject({ fgColor: { argb: 'FFEDC948' } })
+    expect(sheet.getCell('C6').border?.bottom?.style).toBe('medium')
+    expect(sheet.getCell('C7').value).toBeNull()
+    expect(sheet.getCell('C7').fill?.type ?? 'none').not.toBe('pattern')
+  })
+
+  it('picks white or black text from the fill brightness', async () => {
+    const { sheet } = await downloadSheet()
+    // Sanity-check the helper's verdicts, then the cells that use them.
+    expect(textColorFor(VAULT_COLOR)).toBe('#FFFFFF')
+    expect(textColorFor(BEAM_COLOR)).toBe('#000000')
+    expect(sheet.getCell('B4').font?.color?.argb).toBe('FFFFFFFF')
+    expect(sheet.getCell('B6').font?.color?.argb).toBe('FF000000')
+    expect(sheet.getCell('C5').font?.color?.argb).toBe('FF000000')
+  })
+
+  it('splits blocks when the coach changes mid-event', async () => {
     await request(app)
       .put(`/api/sessions/${sessionId}/assignments`)
       .set('Cookie', cookie)
       .send({
         assignments: [
-          { slotIndex: 0, eventId: vaultId, groupId, coachId: null },
-          { slotIndex: 0, eventId: vaultId, groupId: secondGroup, coachId: null },
+          { slotIndex: 0, eventId: vaultId, groupId: groupAId, coachId },
+          { slotIndex: 1, eventId: vaultId, groupId: groupAId, coachId: null },
         ],
       })
       .expect(200)
-
-    const { sheet } = await downloadWorkbook()
-    expect(sheet.getCell('B4').value).toBe('Level 3 Girls\nBoys Team')
+    const { sheet } = await downloadSheet()
+    expect(sheet.getCell('B4').value).toBe('Vault\nDana Marsh')
+    expect(sheet.getCell('B5').value).toBe('Vault')
+    expect(sheet.getCell('B4').border?.bottom?.style).toBe('medium')
+    expect(sheet.getCell('B5').border?.top?.style).toBe('medium')
   })
 })

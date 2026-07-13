@@ -145,6 +145,7 @@ function Chip({
   customColor,
   conflictReasons,
   locked,
+  blockStart = false,
   onToggleLock,
   onRemove,
 }: {
@@ -155,6 +156,8 @@ function Chip({
   customColor?: string
   conflictReasons: string[] | undefined
   locked: boolean
+  /** First cell of a multi-slot block: draws a strong top edge. */
+  blockStart?: boolean
   onToggleLock: () => void
   onRemove: () => void
 }) {
@@ -173,7 +176,9 @@ function Chip({
           : customColor
             ? 'ring-black/10'
             : colorClass
-      } ${locked ? 'outline-2 -outline-offset-1 outline-slate-800' : ''}`}
+      } ${locked ? 'outline-2 -outline-offset-1 outline-slate-800' : ''} ${
+        blockStart ? 'shadow-[inset_0_3px_0_rgba(0,0,0,0.3)]' : ''
+      }`}
     >
       <button
         onClick={onToggleLock}
@@ -287,6 +292,41 @@ export function SchedulePage() {
       ),
     )
 
+  // A "block" is a run of consecutive slots where a group stays on the same
+  // event with the same coach. The By Groups view renders blocks — label on
+  // the first cell, color carried through — and lock/remove act block-wide.
+  const sameCell = (a: Assignment, groupId: number, slotIndex: number) =>
+    a.groupId === groupId && a.slotIndex === slotIndex
+  const continuesFromPrev = (a: Assignment) =>
+    assignments.some(
+      (x) =>
+        sameCell(x, a.groupId, a.slotIndex - 1) &&
+        x.eventId === a.eventId &&
+        x.coachId === a.coachId,
+    )
+  const blockRun = (start: Assignment): Assignment[] => {
+    const run = [start]
+    for (let s = start.slotIndex + 1; ; s++) {
+      const next = assignments.find(
+        (x) => sameCell(x, start.groupId, s) && x.eventId === start.eventId && x.coachId === start.coachId,
+      )
+      if (!next) break
+      run.push(next)
+    }
+    return run
+  }
+  const removeBlock = (start: Assignment) => {
+    const keys = new Set(blockRun(start).map(assignmentKey))
+    return persist(assignments.filter((a) => !keys.has(assignmentKey(a))))
+  }
+  const toggleLockBlock = (start: Assignment) => {
+    const keys = new Set(blockRun(start).map(assignmentKey))
+    const to = !start.locked
+    return persist(
+      assignments.map((a) => (keys.has(assignmentKey(a)) ? { ...a, locked: to } : a)),
+    )
+  }
+
   // Generate ("Shuffle" is the same with a fresh seed): locked cells are
   // kept and solved around; unlocked ones are replaced after a warning.
   const generate = () => {
@@ -328,6 +368,72 @@ export function SchedulePage() {
   }
 
   const conflictCount = conflicts.size
+
+  // By Groups view: block-aware cells. The first slot of a block gets the
+  // full chip (acting on the whole block); continuations are color-only.
+  const groupCell = (group: Group, slotIndex: number) => {
+    const here = assignments.filter((a) => sameCell(a, group.id, slotIndex))
+    const target: PickerTarget = { slotIndex, groupId: group.id }
+    const conflicted = here.some((a) => conflicts.has(assignmentKey(a)))
+    const key = `${slotIndex}:g${group.id}`
+
+    if (here.length > 0 && here.every(continuesFromPrev)) {
+      const a = here[0]!
+      const color = conflicted ? undefined : eventColorOf(a.eventId)
+      const locked = here.some((x) => x.locked)
+      return (
+        <td
+          key={key}
+          className={`min-w-28 rounded-lg p-1 align-top ring-1 ${
+            conflicted ? 'bg-red-50 ring-red-400' : 'bg-white ring-slate-200'
+          }`}
+        >
+          <div
+            title={`${eventNameOf(a.eventId)} (continued)`}
+            style={color ? { backgroundColor: color } : undefined}
+            className={`min-h-12 rounded-md ${conflicted ? 'bg-red-100 ring-2 ring-red-500' : 'ring-1 ring-black/10'} ${
+              locked ? 'outline-2 -outline-offset-1 outline-slate-800' : ''
+            }`}
+          />
+        </td>
+      )
+    }
+
+    return (
+      <td
+        key={key}
+        className={`min-w-28 rounded-lg p-1 align-top ring-1 ${
+          conflicted ? 'bg-red-50 ring-red-400' : 'bg-white ring-slate-200'
+        }`}
+      >
+        <div className="flex min-h-12 flex-col gap-1">
+          {here.map((a) => (
+            <Chip
+              key={assignmentKey(a)}
+              label={eventNameOf(a.eventId)}
+              sub={coachName(a.coachId)}
+              colorClass={groupColor(a.groupId)}
+              customColor={eventColorOf(a.eventId)}
+              blockStart
+              conflictReasons={conflicts.get(assignmentKey(a))?.map((r) => CONFLICT_LABELS[r])}
+              locked={a.locked ?? false}
+              onToggleLock={() => void toggleLockBlock(a)}
+              onRemove={() => void removeBlock(a)}
+            />
+          ))}
+          {here.length === 0 && (
+            <button
+              onClick={() => setPicker(target)}
+              aria-label="assign here"
+              className="min-h-6 flex-1 rounded text-sm text-slate-300 hover:bg-slate-100 hover:text-slate-500"
+            >
+              +
+            </button>
+          )}
+        </div>
+      </td>
+    )
+  }
 
   function cellFor(list: Assignment[], target: PickerTarget, labelOf: (a: Assignment) => string) {
     const conflicted = list.some((a) => conflicts.has(assignmentKey(a)))
@@ -512,15 +618,7 @@ export function SchedulePage() {
                           (a) => groupName(a.groupId),
                         ),
                       )
-                    : sessionGroups.map((group) =>
-                        cellFor(
-                          assignments.filter(
-                            (a) => a.groupId === group.id && a.slotIndex === slotIndex,
-                          ),
-                          { slotIndex, groupId: group.id },
-                          (a) => eventNameOf(a.eventId),
-                        ),
-                      )}
+                    : sessionGroups.map((group) => groupCell(group, slotIndex))}
                 </tr>
               ))}
             </tbody>
