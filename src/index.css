@@ -1,1 +1,15 @@
 @import "tailwindcss";
+
+@media print {
+  /* Event colors must survive printing. */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  body {
+    background: white;
+  }
+  @page {
+    margin: 12mm;
+  }
+}

@@ -569,6 +569,12 @@ export function SchedulePage() {
       )}
       <PageHeader title={sessionLabel(session)}>
         <div className="flex items-center gap-3">
+          <Link
+            to={`/sessions/${sessionId}/print`}
+            className="min-h-10 rounded-lg bg-white px-3 py-2 text-sm font-semibold text-slate-700 ring-1 ring-slate-300 hover:bg-slate-50"
+          >
+            Print
+          </Link>
           <a
             href={`/api/sessions/${sessionId}/export`}
             download
