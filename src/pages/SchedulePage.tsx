@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import type { Assignment, Coach, Group, GymEvent, Session, Settings } from '../../shared/types.ts'
 import { slotCount, slotStart } from '../../shared/slots.ts'
 import { DAY_NAMES, apiGet, apiPut } from '../lib/api.ts'
@@ -211,6 +211,8 @@ function Chip({
 export function SchedulePage() {
   const params = useParams()
   const sessionId = Number(params.id)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const showWelcome = searchParams.get('welcome') === '1'
 
   const sessionLoad = useLoad(() => apiGet<{ session: Session }>(`/api/sessions/${sessionId}`))
   const eventsLoad = useLoad(() => apiGet<{ events: GymEvent[] }>('/api/events'))
@@ -477,6 +479,19 @@ export function SchedulePage() {
 
   return (
     <div className="space-y-4">
+      {showWelcome && (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl bg-indigo-50 p-4 ring-1 ring-indigo-200">
+          <p className="flex-1 text-sm text-indigo-900">
+            🎉 <span className="font-semibold">Setup complete</span> — this is your schedule
+            grid. Hit <span className="font-semibold">Generate schedule</span> to auto-fill the
+            rotation, or tap any <span className="font-semibold">+</span> cell to assign a group
+            manually.
+          </p>
+          <Button variant="secondary" onClick={() => setSearchParams({}, { replace: true })}>
+            Got it
+          </Button>
+        </div>
+      )}
       <PageHeader title={sessionLabel(session)}>
         <div className="flex items-center gap-3">
           <a

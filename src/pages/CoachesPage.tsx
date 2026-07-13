@@ -14,13 +14,13 @@ import {
   TextInput,
 } from '../components/ui.tsx'
 
-interface CoachFormValues {
+export interface CoachFormValues {
   name: string
   specialties: number[]
   availability: number[]
 }
 
-function CoachForm({
+export function CoachForm({
   initial,
   events,
   onSave,

@@ -6,7 +6,7 @@ import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api.ts'
 import { useLoad } from '../lib/useLoad.ts'
 import { Button, Card, EmptyNote, ErrorNote, Field, PageHeader, TextInput } from '../components/ui.tsx'
 
-interface EventFormValues {
+export interface EventFormValues {
   name: string
   capacity: number
   active: boolean
@@ -67,7 +67,7 @@ function ColorPicker({
   )
 }
 
-function EventForm({
+export function EventForm({
   initial,
   onSave,
   onCancel,

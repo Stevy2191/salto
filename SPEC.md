@@ -112,10 +112,18 @@ session.
 ### Phase 1 — Setup & manual grid (walking skeleton)
 - CRUD for events, coaches, groups, sessions
 - **First-run experience:** a new gym sees an empty database. Provide a
-  guided setup flow (add events → groups → coaches → first session) and a
-  "load example gym" option that seeds realistic sample data (clearly
-  fictional names) so users can explore before entering their own. Sample
-  data must be one-click removable.
+  guided setup **wizard** that carries the user through the steps in order
+  (add events → groups → coaches → first session) with Next/Back
+  navigation and a visible progress indicator (step names + "Step N of 4").
+  Steps aren't blocked on perfection — Next unlocks once the step has at
+  least one item. Finishing lands on the newly created session's schedule
+  grid with a brief pointer toward generation/manual assignment. The wizard
+  is non-blocking: exit any time, resume from the home page (which shows
+  setup progress), and completing setup another way — e.g. loading the
+  example gym — dismisses the guide. Also provide a "load example gym"
+  option that seeds realistic sample data (clearly fictional names) so
+  users can explore before entering their own. Sample data must be
+  one-click removable.
 - A schedule grid (rows = events, columns = time slots; toggleable to
   rows = groups) where a schedule can be built/edited **manually** via
   drag-and-drop or click-to-assign

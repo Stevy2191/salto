@@ -9,6 +9,7 @@ import { CoachesPage } from './pages/CoachesPage.tsx'
 import { GroupsPage } from './pages/GroupsPage.tsx'
 import { SessionsPage } from './pages/SessionsPage.tsx'
 import { SchedulePage } from './pages/SchedulePage.tsx'
+import { SetupWizard } from './pages/SetupWizard.tsx'
 
 function App() {
   return (
@@ -24,6 +25,7 @@ function App() {
             <Route path="/groups" element={<GroupsPage />} />
             <Route path="/sessions" element={<SessionsPage />} />
             <Route path="/sessions/:id/schedule" element={<SchedulePage />} />
+            <Route path="/guide/:step?" element={<SetupWizard />} />
           </Route>
         </Routes>
       </BrowserRouter>

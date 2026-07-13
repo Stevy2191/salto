@@ -5,6 +5,7 @@ import { DAY_NAMES, apiDelete, apiGet, apiPost } from '../lib/api.ts'
 import { useLoad } from '../lib/useLoad.ts'
 import { Button, Card, EmptyNote, ErrorNote, PageHeader } from '../components/ui.tsx'
 import { sessionLabel } from './SessionsPage.tsx'
+import { SETUP_STEPS } from './SetupWizard.tsx'
 
 interface Overview {
   events: GymEvent[]
@@ -32,61 +33,51 @@ async function loadOverview(): Promise<Overview> {
 }
 
 function GuidedSetup({ overview, onLoadExample }: { overview: Overview; onLoadExample: () => void }) {
-  const steps = [
-    {
-      to: '/events',
-      title: 'Add your events',
-      detail: 'Vault, bars, beam, floor — whatever stations your gym has.',
-      done: overview.events.length > 0,
-    },
-    {
-      to: '/groups',
-      title: 'Add your groups',
-      detail: 'Each training group, its priority, and which events it needs.',
-      done: overview.groups.length > 0,
-    },
-    {
-      to: '/coaches',
-      title: 'Add your coaches',
-      detail: 'Who coaches what, and which days they work.',
-      done: overview.coaches.length > 0,
-    },
-    {
-      to: '/sessions',
-      title: 'Create your first session',
-      detail: 'A practice block with its time window and attending groups.',
-      done: overview.sessions.length > 0,
-    },
+  const done = [
+    overview.events.length > 0,
+    overview.groups.length > 0,
+    overview.coaches.length > 0,
+    overview.sessions.length > 0,
   ]
-  const nextIndex = steps.findIndex((s) => !s.done)
+  const nextIndex = done.indexOf(false)
+  const resumeStep = SETUP_STEPS[nextIndex === -1 ? 0 : nextIndex]!
+  const started = done.some(Boolean)
 
   return (
     <div className="space-y-4">
       <Card>
         <h2 className="text-lg font-bold text-slate-900">Welcome to Salto 👋</h2>
         <p className="mt-1 text-sm text-slate-600">
-          Set up your gym in four steps, or load a fictional example gym to explore first — you can
-          remove it again with one click.
+          The setup guide walks you through the four steps below — or load a fictional example
+          gym to explore first; you can remove it again with one click.
         </p>
-        <div className="mt-3">
-          <Button onClick={onLoadExample}>Load example gym</Button>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Link
+            to={`/guide/${resumeStep.slug}`}
+            className="min-h-11 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500"
+          >
+            {started ? 'Resume setup' : 'Start setup'}
+          </Link>
+          <Button variant="secondary" onClick={onLoadExample}>
+            Load example gym
+          </Button>
         </div>
       </Card>
       <ol className="space-y-2">
-        {steps.map((step, index) => (
-          <li key={step.to}>
+        {SETUP_STEPS.map((step, index) => (
+          <li key={step.slug}>
             <Link
-              to={step.to}
+              to={`/guide/${step.slug}`}
               className={`flex items-center gap-3 rounded-xl bg-white p-4 ring-1 transition-shadow hover:shadow ${
                 index === nextIndex ? 'ring-2 ring-indigo-500' : 'ring-slate-200'
               }`}
             >
               <span
                 className={`flex size-8 shrink-0 items-center justify-center rounded-full text-sm font-bold ${
-                  step.done ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'
+                  done[index] ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'
                 }`}
               >
-                {step.done ? '✓' : index + 1}
+                {done[index] ? '✓' : index + 1}
               </span>
               <span>
                 <span className="block font-medium text-slate-900">{step.title}</span>

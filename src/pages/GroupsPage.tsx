@@ -15,7 +15,7 @@ import {
   TextInput,
 } from '../components/ui.tsx'
 
-interface GroupFormValues {
+export interface GroupFormValues {
   name: string
   priority: number
   requiredEvents: RequiredEvent[]
@@ -93,7 +93,7 @@ function RequiredEventsEditor({
   )
 }
 
-function GroupForm({
+export function GroupForm({
   initial,
   events,
   coaches,

@@ -17,7 +17,7 @@ import {
   TextInput,
 } from '../components/ui.tsx'
 
-interface SessionFormValues {
+export interface SessionFormValues {
   name: string
   dayOfWeek: number
   startTime: string
@@ -26,7 +26,7 @@ interface SessionFormValues {
   groups: number[]
 }
 
-function SessionForm({
+export function SessionForm({
   initial,
   groups,
   onSave,
