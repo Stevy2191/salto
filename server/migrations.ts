@@ -102,6 +102,15 @@ CREATE TABLE IF NOT EXISTS settings (
       db.exec('ALTER TABLE assignments ADD COLUMN locked INTEGER NOT NULL DEFAULT 0')
     },
   },
+  {
+    name: 'session-outages',
+    up: (db) => {
+      // Day-of, session-scoped outages — distinct from deactivating an
+      // event globally or removing a coach.
+      db.exec("ALTER TABLE sessions ADD COLUMN absent_coaches TEXT NOT NULL DEFAULT '[]'")
+      db.exec("ALTER TABLE sessions ADD COLUMN unavailable_events TEXT NOT NULL DEFAULT '[]'")
+    },
+  },
 ]
 
 export function runMigrations(db: DatabaseSync, upTo: number = MIGRATIONS.length): void {

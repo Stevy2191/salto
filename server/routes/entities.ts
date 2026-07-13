@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import type { DatabaseSync } from 'node:sqlite'
 import type { Coach, Group, GymEvent, RequiredEvent, Session } from '../../shared/types.ts'
-import { parseTime } from '../../shared/slots.ts'
+import { formatTime, parseTime } from '../../shared/slots.ts'
 import { isHexColor, nextPaletteColor } from '../../shared/colors.ts'
 import {
   ApiError,
@@ -49,6 +49,8 @@ interface SessionRow {
   end_time: string
   rotation_length: number
   groups: string
+  absent_coaches: string
+  unavailable_events: string
   is_sample: number
 }
 
@@ -86,6 +88,8 @@ const toSession = (r: SessionRow): Session => ({
   endTime: r.end_time,
   rotationLength: r.rotation_length,
   groups: JSON.parse(r.groups) as number[],
+  absentCoaches: JSON.parse(r.absent_coaches) as number[],
+  unavailableEvents: JSON.parse(r.unavailable_events) as number[],
   isSample: r.is_sample === 1,
 })
 
@@ -390,6 +394,68 @@ export function entityRoutes(db: DatabaseSync): Router {
     requireRow(db.prepare('SELECT id FROM sessions WHERE id = ?').get(id), 'session')
     db.prepare('DELETE FROM sessions WHERE id = ?').run(id)
     res.status(204).end()
+  })
+
+  // Day-of outages, session-scoped. Kept separate from the session form's
+  // PUT so editing a session never clears them.
+  router.put('/sessions/:id/outages', (req, res) => {
+    const id = idParam(req.params.id)
+    requireRow(db.prepare('SELECT id FROM sessions WHERE id = ?').get(id), 'session')
+    const obj = asObject(req.body)
+    const absentCoaches = intArray(obj.absentCoaches, 'absentCoaches')
+    const unavailableEvents = intArray(obj.unavailableEvents, 'unavailableEvents')
+    db.prepare('UPDATE sessions SET absent_coaches = ?, unavailable_events = ? WHERE id = ?').run(
+      JSON.stringify(absentCoaches),
+      JSON.stringify(unavailableEvents),
+      id,
+    )
+    const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as unknown as SessionRow
+    res.json({ session: toSession(row) })
+  })
+
+  // Copy a session as a starting point: same duration, rotation, groups,
+  // and full schedule (assignments arrive unlocked); outages don't copy.
+  router.post('/sessions/:id/copy', (req, res) => {
+    const id = idParam(req.params.id)
+    const source = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as unknown as
+      | SessionRow
+      | undefined
+    requireRow(source, 'session')
+    const obj = asObject(req.body)
+    const name = optString(obj.name, 'name')
+    const dayOfWeek = reqInt(obj.dayOfWeek, 'dayOfWeek', 0, 6)
+    const startTime = reqString(obj.startTime, 'startTime', 5)
+    const start = parseTime(startTime)
+    if (start === null) throw new ApiError(400, 'startTime must be HH:MM')
+    const sourceStart = parseTime(source!.start_time)!
+    const sourceEnd = parseTime(source!.end_time)!
+    const end = start + (sourceEnd - sourceStart)
+    if (end > 24 * 60) {
+      throw new ApiError(400, 'the copied session would run past midnight — pick an earlier start')
+    }
+
+    const newId = withTransaction(db, () => {
+      const inserted = db
+        .prepare(
+          'INSERT INTO sessions (name, day_of_week, start_time, end_time, rotation_length, groups) VALUES (?, ?, ?, ?, ?, ?)',
+        )
+        .run(
+          name,
+          dayOfWeek,
+          startTime,
+          formatTime(end),
+          source!.rotation_length,
+          source!.groups,
+        )
+      const sessionId = Number(inserted.lastInsertRowid)
+      db.prepare(
+        `INSERT INTO assignments (session_id, slot_index, event_id, group_id, coach_id, locked)
+         SELECT ?, slot_index, event_id, group_id, coach_id, 0 FROM assignments WHERE session_id = ?`,
+      ).run(sessionId, id)
+      return sessionId
+    })
+    const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(newId) as unknown as SessionRow
+    res.status(201).json({ session: toSession(row) })
   })
 
   return router

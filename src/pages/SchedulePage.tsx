@@ -8,7 +8,8 @@ import { CONFLICT_LABELS, assignmentKey, findConflicts } from '../lib/conflicts.
 import { groupColor } from '../lib/colors.ts'
 import { textColorFor } from '../../shared/colors.ts'
 import { generateSchedule } from '../solver/solver.ts'
-import { Button, Card, ErrorNote, Field, PageHeader, Select } from '../components/ui.tsx'
+import { describeRepairChanges, repairSchedule } from '../solver/repair.ts'
+import { Button, Card, ChipPicker, ErrorNote, Field, PageHeader, Select } from '../components/ui.tsx'
 import { sessionLabel } from './SessionsPage.tsx'
 
 type SaveState = 'saved' | 'saving' | 'error'
@@ -145,6 +146,7 @@ function Chip({
   customColor,
   conflictReasons,
   locked,
+  outage,
   blockStart = false,
   onToggleLock,
   onRemove,
@@ -156,6 +158,8 @@ function Chip({
   customColor?: string
   conflictReasons: string[] | undefined
   locked: boolean
+  /** Day-of outage affecting this cell ("Dana Marsh is out today"). */
+  outage?: string
   /** First cell of a multi-slot block: draws a strong top edge. */
   blockStart?: boolean
   onToggleLock: () => void
@@ -168,7 +172,7 @@ function Chip({
       : undefined
   return (
     <span
-      title={conflicted ? conflictReasons.join('; ') : undefined}
+      title={conflicted ? conflictReasons.join('; ') : outage}
       style={style}
       className={`flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium ring-1 ${
         conflicted
@@ -176,9 +180,9 @@ function Chip({
           : customColor
             ? 'ring-black/10'
             : colorClass
-      } ${locked ? 'outline-2 -outline-offset-1 outline-slate-800' : ''} ${
-        blockStart ? 'shadow-[inset_0_3px_0_rgba(0,0,0,0.3)]' : ''
-      }`}
+      } ${!conflicted && outage ? 'ring-2 ring-amber-500' : ''} ${
+        locked ? 'outline-2 -outline-offset-1 outline-slate-800' : ''
+      } ${blockStart ? 'shadow-[inset_0_3px_0_rgba(0,0,0,0.3)]' : ''}`}
     >
       <button
         onClick={onToggleLock}
@@ -192,7 +196,9 @@ function Chip({
         {locked ? '🔒' : '🔓'}
       </button>
       <span className="min-w-0 flex-1">
-        <span className="block truncate">{conflicted ? `⚠ ${label}` : label}</span>
+        <span className="block truncate">
+          {conflicted || outage ? `⚠ ${label}` : label}
+        </span>
         {sub && <span className="block truncate font-normal opacity-75">{sub}</span>}
       </span>
       {!locked && (
@@ -229,6 +235,7 @@ export function SchedulePage() {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [picker, setPicker] = useState<PickerTarget | null>(null)
   const [generationErrors, setGenerationErrors] = useState<string[] | null>(null)
+  const [repairSummary, setRepairSummary] = useState<string[] | null>(null)
 
   useEffect(() => {
     if (assignmentsLoad.data) setAssignments(assignmentsLoad.data.assignments)
@@ -369,6 +376,67 @@ export function SchedulePage() {
     }
   }
 
+  // --- Day-of changes: session-scoped outages + minimal-disruption repair.
+  const absentSet = new Set(session.absentCoaches)
+  const downSet = new Set(session.unavailableEvents)
+  const outagesActive = absentSet.size > 0 || downSet.size > 0
+  const outageReasonFor = (a: Assignment): string | undefined => {
+    if (downSet.has(a.eventId)) return `${eventNameOf(a.eventId)} is out today`
+    if (a.coachId !== null && absentSet.has(a.coachId))
+      return `${coachName(a.coachId)} is out today`
+    return undefined
+  }
+  const affectedCount = assignments.filter((a) => outageReasonFor(a) !== undefined).length
+
+  const setOutages = async (absentCoaches: number[], unavailableEvents: number[]) => {
+    try {
+      await apiPut(`/api/sessions/${sessionId}/outages`, { absentCoaches, unavailableEvents })
+      setSaveError(null)
+      await sessionLoad.reload()
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'could not save outages')
+    }
+  }
+
+  const repair = () => {
+    if (!settingsLoad.data) return
+    const result = repairSchedule({
+      events: events.map(({ id, name, capacity, active }) => ({ id, name, capacity, active })),
+      groups: sessionGroups.map(({ id, name, priority, requiredEvents, assignedCoaches }) => ({
+        id,
+        name,
+        priority,
+        requiredEvents,
+        assignedCoaches,
+      })),
+      coaches: coaches.map(({ id, name, specialties }) => ({ id, name, specialties })),
+      slotCount: slots,
+      rotationLength: session.rotationLength,
+      coachMode: settingsLoad.data.settings.coachMode,
+      adjacencyPenalties: settingsLoad.data.settings.adjacencyPenalties,
+      original: assignments,
+      absentCoachIds: session.absentCoaches,
+      unavailableEventIds: session.unavailableEvents,
+      seed: Math.floor(Math.random() * 2 ** 31),
+    })
+    if (result.ok) {
+      setRepairSummary(
+        describeRepairChanges(result.changes, {
+          events,
+          groups,
+          coaches,
+          startTime: session.startTime,
+          rotationLength: session.rotationLength,
+        }),
+      )
+      setGenerationErrors(null)
+      void persist(result.assignments)
+    } else {
+      setGenerationErrors(result.reasons)
+      setRepairSummary(null)
+    }
+  }
+
   const conflictCount = conflicts.size
 
   // By Groups view: block-aware cells. The first slot of a block gets the
@@ -383,6 +451,7 @@ export function SchedulePage() {
       const a = here[0]!
       const color = conflicted ? undefined : eventColorOf(a.eventId)
       const locked = here.some((x) => x.locked)
+      const outage = outageReasonFor(a)
       return (
         <td
           key={key}
@@ -391,11 +460,15 @@ export function SchedulePage() {
           }`}
         >
           <div
-            title={`${eventNameOf(a.eventId)} (continued)`}
+            title={outage ?? `${eventNameOf(a.eventId)} (continued)`}
             style={color ? { backgroundColor: color } : undefined}
-            className={`min-h-12 rounded-md ${conflicted ? 'bg-red-100 ring-2 ring-red-500' : 'ring-1 ring-black/10'} ${
-              locked ? 'outline-2 -outline-offset-1 outline-slate-800' : ''
-            }`}
+            className={`min-h-12 rounded-md ${
+              conflicted
+                ? 'bg-red-100 ring-2 ring-red-500'
+                : outage
+                  ? 'ring-2 ring-amber-500'
+                  : 'ring-1 ring-black/10'
+            } ${locked ? 'outline-2 -outline-offset-1 outline-slate-800' : ''}`}
           />
         </td>
       )
@@ -419,6 +492,7 @@ export function SchedulePage() {
               blockStart
               conflictReasons={conflicts.get(assignmentKey(a))?.map((r) => CONFLICT_LABELS[r])}
               locked={a.locked ?? false}
+              outage={outageReasonFor(a)}
               onToggleLock={() => void toggleLockBlock(a)}
               onRemove={() => void removeBlock(a)}
             />
@@ -461,6 +535,7 @@ export function SchedulePage() {
                 .get(assignmentKey(a))
                 ?.map((r) => CONFLICT_LABELS[r])}
               locked={a.locked ?? false}
+              outage={outageReasonFor(a)}
               onToggleLock={() => void toggleLock(a)}
               onRemove={() => void remove(a)}
             />
@@ -546,6 +621,69 @@ export function SchedulePage() {
         </p>
       </div>
       <ErrorNote message={saveError} />
+
+      <details
+        open={outagesActive}
+        className="rounded-xl bg-white p-4 ring-1 ring-slate-200"
+      >
+        <summary className="cursor-pointer text-sm font-semibold text-slate-700">
+          Day-of changes
+          {affectedCount > 0 && (
+            <span className="ml-2 font-medium text-amber-600">
+              ⚠ {affectedCount} assignment{affectedCount === 1 ? '' : 's'} affected
+            </span>
+          )}
+        </summary>
+        <div className="mt-3 space-y-3">
+          <Field label="Coaches out for this session">
+            <ChipPicker
+              tone="amber"
+              options={coaches.map((c) => ({ id: c.id, label: c.name }))}
+              selected={session.absentCoaches}
+              onChange={(ids) => void setOutages(ids, session.unavailableEvents)}
+            />
+          </Field>
+          <Field label="Events out for this session">
+            <ChipPicker
+              tone="amber"
+              options={events
+                .filter((e) => e.active)
+                .map((e) => ({ id: e.id, label: e.name }))}
+              selected={session.unavailableEvents}
+              onChange={(ids) => void setOutages(session.absentCoaches, ids)}
+            />
+          </Field>
+          {outagesActive && (
+            <div className="flex flex-wrap items-center gap-3">
+              <Button onClick={repair}>Repair schedule</Button>
+              <p className="text-sm text-slate-500">
+                Keeps everything unaffected in place; only fixes what the outage touches.
+              </p>
+            </div>
+          )}
+        </div>
+      </details>
+
+      {repairSummary && (
+        <div role="status" className="rounded-xl bg-emerald-50 p-4 ring-1 ring-emerald-200">
+          <div className="flex items-start justify-between gap-2">
+            <p className="font-semibold text-emerald-900">Schedule repaired</p>
+            <button
+              onClick={() => setRepairSummary(null)}
+              aria-label="dismiss"
+              className="rounded px-1 text-emerald-400 hover:bg-emerald-100 hover:text-emerald-700"
+            >
+              ×
+            </button>
+          </div>
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-emerald-900">
+            {repairSummary.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {generationErrors && (
         <div role="alert" className="rounded-xl bg-red-50 p-4 ring-1 ring-red-200">
           <div className="flex items-start justify-between gap-2">
@@ -595,6 +733,11 @@ export function SchedulePage() {
                         {event.name}
                         {!event.active && (
                           <span className="block text-xs font-normal text-red-500">inactive</span>
+                        )}
+                        {downSet.has(event.id) && (
+                          <span className="block text-xs font-normal text-amber-600">
+                            ⚠ out today
+                          </span>
                         )}
                         {event.capacity > 1 && (
                           <span className="block text-xs font-normal text-slate-500">

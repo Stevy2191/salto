@@ -50,6 +50,10 @@ export interface Session {
   rotationLength: number
   /** Group ids attending this session. */
   groups: number[]
+  /** Coaches marked absent for this session only (day-of change). */
+  absentCoaches: number[]
+  /** Events marked out for this session only (day-of change). */
+  unavailableEvents: number[]
   isSample: boolean
 }
 

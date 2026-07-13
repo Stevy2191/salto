@@ -254,6 +254,107 @@ describe('sessions CRUD', () => {
       .expect(400)
   })
 
+  it('stores day-of outages separately from session edits', async () => {
+    const session = (
+      await request(app)
+        .post('/api/sessions')
+        .set('Cookie', cookie)
+        .send({ dayOfWeek: 1, startTime: '16:00', endTime: '18:00' })
+    ).body.session
+    expect(session.absentCoaches).toEqual([])
+    expect(session.unavailableEvents).toEqual([])
+
+    const updated = await request(app)
+      .put(`/api/sessions/${session.id}/outages`)
+      .set('Cookie', cookie)
+      .send({ absentCoaches: [3], unavailableEvents: [1, 2] })
+      .expect(200)
+    expect(updated.body.session.absentCoaches).toEqual([3])
+    expect(updated.body.session.unavailableEvents).toEqual([1, 2])
+
+    // A normal session edit must not clear the outages.
+    await request(app)
+      .put(`/api/sessions/${session.id}`)
+      .set('Cookie', cookie)
+      .send({ name: 'Renamed', dayOfWeek: 2, startTime: '16:00', endTime: '18:00' })
+      .expect(200)
+    const after = await request(app).get(`/api/sessions/${session.id}`).set('Cookie', cookie)
+    expect(after.body.session.absentCoaches).toEqual([3])
+    expect(after.body.session.unavailableEvents).toEqual([1, 2])
+  })
+
+  it('copies a session with schedule, groups, and duration', async () => {
+    const eventId = (
+      await request(app).post('/api/events').set('Cookie', cookie).send({ name: 'Vault' })
+    ).body.event.id
+    const groupId = (
+      await request(app).post('/api/groups').set('Cookie', cookie).send({ name: 'L3' })
+    ).body.group.id
+    const source = (
+      await request(app)
+        .post('/api/sessions')
+        .set('Cookie', cookie)
+        .send({
+          name: 'Monday',
+          dayOfWeek: 1,
+          startTime: '16:00',
+          endTime: '18:30',
+          rotationLength: 30,
+          groups: [groupId],
+        })
+    ).body.session
+    await request(app)
+      .put(`/api/sessions/${source.id}/assignments`)
+      .set('Cookie', cookie)
+      .send({ assignments: [{ slotIndex: 0, eventId, groupId, coachId: null, locked: true }] })
+      .expect(200)
+    await request(app)
+      .put(`/api/sessions/${source.id}/outages`)
+      .set('Cookie', cookie)
+      .send({ absentCoaches: [9], unavailableEvents: [] })
+      .expect(200)
+
+    const copy = (
+      await request(app)
+        .post(`/api/sessions/${source.id}/copy`)
+        .set('Cookie', cookie)
+        .send({ name: 'Thursday', dayOfWeek: 4, startTime: '17:00' })
+        .expect(201)
+    ).body.session
+    // Same duration and rotation, chosen day/time, same groups, no outages.
+    expect(copy).toMatchObject({
+      name: 'Thursday',
+      dayOfWeek: 4,
+      startTime: '17:00',
+      endTime: '19:30',
+      rotationLength: 30,
+      groups: [groupId],
+      absentCoaches: [],
+      unavailableEvents: [],
+    })
+    // Schedule copied, arriving unlocked.
+    const assignments = (
+      await request(app).get(`/api/sessions/${copy.id}/assignments`).set('Cookie', cookie)
+    ).body.assignments
+    expect(assignments).toEqual([
+      { slotIndex: 0, eventId, groupId, coachId: null, locked: false },
+    ])
+  })
+
+  it('rejects a copy that would run past midnight', async () => {
+    const source = (
+      await request(app)
+        .post('/api/sessions')
+        .set('Cookie', cookie)
+        .send({ dayOfWeek: 1, startTime: '16:00', endTime: '20:00' })
+    ).body.session
+    await request(app)
+      .post(`/api/sessions/${source.id}/copy`)
+      .set('Cookie', cookie)
+      .send({ dayOfWeek: 2, startTime: '21:00' })
+      .expect(400)
+  })
+
   it('rejects end before start and malformed times', async () => {
     await request(app)
       .post('/api/sessions')

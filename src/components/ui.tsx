@@ -89,11 +89,16 @@ export function ChipPicker({
   options,
   selected,
   onChange,
+  tone = 'indigo',
 }: {
   options: { id: number; label: string }[]
   selected: number[]
   onChange: (ids: number[]) => void
+  /** amber reads as "marked out" (day-of changes) rather than "included". */
+  tone?: 'indigo' | 'amber'
 }) {
+  const activeClass =
+    tone === 'amber' ? 'bg-amber-500 text-white' : 'bg-indigo-600 text-white'
   return (
     <div className="flex flex-wrap gap-2">
       {options.length === 0 && <span className="text-sm text-slate-400">none available yet</span>}
@@ -108,11 +113,10 @@ export function ChipPicker({
               onChange(active ? selected.filter((id) => id !== opt.id) : [...selected, opt.id])
             }
             className={`min-h-10 rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
-              active
-                ? 'bg-indigo-600 text-white'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              active ? activeClass : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
             }`}
           >
+            {tone === 'amber' && active ? '⚠ ' : ''}
             {opt.label}
           </button>
         )
