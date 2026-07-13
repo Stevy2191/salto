@@ -38,7 +38,7 @@ test('first run: admin setup, then the setup wizard through to the grid', async 
   await expect(page.getByText('Step 3 of 4')).toBeVisible()
   await page.getByRole('button', { name: /back/i }).click()
   await expect(page).toHaveURL(/\/guide\/groups$/)
-  await expect(page.getByText('Level 3 Girls')).toBeVisible()
+  await expect(page.getByText('Level 3 Girls', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: /next/i }).click()
   await page.getByLabel('Coach name').fill('Dana Marsh')
   await page.getByRole('button', { name: 'Save' }).click()
