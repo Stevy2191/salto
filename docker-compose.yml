@@ -1,0 +1,17 @@
+services:
+  salto:
+    build: .
+    restart: unless-stopped
+    ports:
+      # Host port is configurable via .env; inside the container the app
+      # listens on PORT (default 3000).
+      - "${SALTO_PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=production
+      - DATA_DIR=/data
+    volumes:
+      # SQLite lives here so data survives container updates.
+      - salto-data:/data
+
+volumes:
+  salto-data:

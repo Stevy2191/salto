@@ -18,6 +18,8 @@ Salto is a general-purpose product: every gym defines its own events/stations, e
 - A schedule grid (events × time slots, toggleable to groups × time slots) with manual drag-and-drop / click-to-assign editing
 - Conflict highlighting when a cell is double-booked
 - Data persistence
+- Dockerfile + docker-compose.yml working end to end
+- First-run admin account creation + login
 
 **Phase 2 — Auto-generation**
 - Generate a conflict-free schedule for a session with the constraint solver
@@ -43,16 +45,42 @@ The solver is a pure TypeScript module with no UI dependencies, deterministic gi
 ## Tech stack
 
 - React + TypeScript + Vite, Tailwind CSS
+- Express backend serving the API and the built frontend from one process
+- SQLite on a mounted volume for persistence
 - Vitest for testing (property-based tests for the solver)
-- Local-first persistence
 
-## Getting started
+## Deployment
+
+Salto is self-hosted as a single Docker container:
+
+```bash
+cp .env.example .env   # optional — defaults work out of the box
+docker compose up -d
+```
+
+The app listens on the host port set by `SALTO_PORT` (default `3000`). The SQLite database lives on a named volume (`salto-data`, mounted at `/data`), so it survives container updates.
+
+Environment variables are documented in [`.env.example`](.env.example). Never commit your real `.env`.
+
+**Behind a reverse proxy (e.g. Nginx Proxy Manager):** point the proxy at the published port and serve the app at the root of its own subdomain (e.g. `salto.example.com`). The server binds `0.0.0.0` and trusts `X-Forwarded-*` headers from one proxy hop, so secure cookies and logging work behind the proxy. No base-path support in v1.
+
+## Authentication
+
+Instances are publicly reachable, so v1 requires login — kept deliberately simple:
+
+- A single admin account, created on first run via a setup screen
+- Session-based login with secure, httpOnly cookies
+- Everything is behind login: hashed passwords, rate-limited login attempts, CSRF protection on mutations
+- No OAuth, no user management UI, no roles (read-only coach share links are planned for Phase 3+)
+
+## Development
 
 ```bash
 npm install
-npm run dev     # start the dev server
+npm run dev     # start the Vite dev server
 npm test        # run the test suite
 npm run build   # typecheck and build for production
+npm start       # run the production server (serves dist/ — build first)
 ```
 
 ## Non-goals for v1

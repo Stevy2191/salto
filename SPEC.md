@@ -29,8 +29,8 @@ everything flows from user configuration.
 
 Each installation serves one gym. Multi-gym hosting is out of scope for v1.
 
-No parent/athlete-facing features in v1. Assume a small number of trusted
-users; simple auth is fine (or none for the MVP, if it runs locally).
+No parent/athlete-facing features in v1. Single admin login per instance
+(see Authentication section).
 
 ## Core Entities (data model)
 
@@ -117,6 +117,8 @@ session.
   drag-and-drop or click-to-assign
 - Conflict highlighting in the manual editor (red cell when double-booked)
 - Data persistence
+- Dockerfile + docker-compose.yml working end to end (see Deployment)
+- First-run admin account creation + login (see Authentication)
 
 This phase alone already beats the whiteboard, and it validates the data
 model before the solver is built.
@@ -142,12 +144,44 @@ model before the solver is built.
 - Attendance-aware scheduling
 - TV display mode that highlights the current rotation live
 
+## Deployment
+
+Salto is distributed as a self-hosted Docker application.
+
+- **Single container:** Node backend serves both the API and the built React
+  frontend. SQLite lives on a mounted volume so data survives container
+  updates. No separate database service.
+- **`docker-compose.yml` in the repo root** — a gym's entire deployment is
+  `docker compose up -d`.
+- **`Dockerfile` built and tested in Phase 1**, not bolted on later. Use a
+  multi-stage build (build frontend → slim runtime image).
+- **Reverse-proxy friendly (Nginx Proxy Manager):** bind to `0.0.0.0`,
+  configurable port via env var (default e.g. `3000`), no hardcoded hostnames
+  or absolute URLs in the frontend, trust `X-Forwarded-*` headers (Express
+  `trust proxy`) so secure cookies and logging work behind NPM. Assume the
+  app is served at the root of its own subdomain (e.g.,
+  `salto.example.com`) — no base-path support needed in v1.
+- **Configuration via environment variables** documented in the README and a
+  committed `.env.example`. Secrets never committed.
+
+## Authentication
+
+Because instances are publicly accessible, v1 requires auth — but keep it
+simple and single-gym:
+
+- Single admin account created on first run (setup screen), session-based
+  login (secure, httpOnly cookies).
+- All routes behind login in v1; no anonymous access. (Read-only share links
+  for coaches are a Phase 3+ feature.)
+- Standard hygiene: hashed passwords (bcrypt/argon2), rate-limited login,
+  CSRF protection on mutations.
+- No OAuth, no user management UI, no roles in v1.
+
 ## Tech Stack (suggested)
 
 - **Frontend:** React + TypeScript + Vite, Tailwind for styling
-- **State/persistence:** Start local-first — SQLite via a light backend
-  (Node + Express or Hono), or even IndexedDB if fully client-side is
-  acceptable for v1. Don't build multi-tenant infrastructure yet.
+- **Backend:** Node (Express or Hono) + SQLite on a mounted volume. Serves
+  API and static frontend from one process/container.
 - **Solver:** Pure TypeScript module, `packages/solver` or `src/solver`,
   zero UI imports, exhaustive unit tests
 - **Testing:** Vitest; property-based tests for the solver (fast-check)
