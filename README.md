@@ -77,10 +77,10 @@ Instances are publicly reachable, so v1 requires login — kept deliberately sim
 
 ```bash
 npm install
-npm run dev     # start the Vite dev server
+npm start       # terminal 1: the Express API (and dist/, if built)
+npm run dev     # terminal 2: Vite dev server, proxies /api to :3000
 npm test        # run the test suite
 npm run build   # typecheck and build for production
-npm start       # run the production server (serves dist/ — build first)
 ```
 
 ## Non-goals for v1
