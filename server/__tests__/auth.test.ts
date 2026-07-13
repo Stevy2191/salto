@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import request from 'supertest'
 import type { Express } from 'express'
 import { createApp } from '../app.ts'
@@ -130,6 +130,25 @@ describe('login rate limiting', () => {
       .post('/api/login')
       .send({ username: 'admin', password: 'correct-horse' })
       .expect(429)
+  })
+})
+
+describe('SESSION_SECRET pepper', () => {
+  it('sessions work with a secret set, and die when it changes', async () => {
+    vi.stubEnv('SESSION_SECRET', 'pepper-one')
+    try {
+      const app = makeApp()
+      const cookie = await setupAdmin(app)
+
+      const me = await request(app).get('/api/me').set('Cookie', cookie)
+      expect(me.body.user).not.toBeNull()
+
+      vi.stubEnv('SESSION_SECRET', 'pepper-two')
+      const after = await request(app).get('/api/me').set('Cookie', cookie)
+      expect(after.body.user).toBeNull()
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 })
 

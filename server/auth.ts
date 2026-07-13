@@ -23,10 +23,16 @@ export function verifyPassword(password: string, stored: string): boolean {
   return key.length === expected.length && crypto.timingSafeEqual(key, expected)
 }
 
-// Sessions are opaque random tokens; only their SHA-256 is stored, so a
-// leaked database cannot be replayed into live sessions and no signing
-// secret is needed.
+// Sessions are opaque random tokens; only a hash is stored, so a leaked
+// database cannot be replayed into live sessions. When SESSION_SECRET is
+// set (install.sh generates one), the hash is additionally peppered with
+// it, so the database alone cannot even validate a guessed token. Changing
+// or unsetting the secret invalidates existing sessions (users re-login).
 function hashToken(token: string): string {
+  const secret = process.env.SESSION_SECRET
+  if (secret) {
+    return crypto.createHmac('sha256', secret).update(token).digest('hex')
+  }
   return crypto.createHash('sha256').update(token).digest('hex')
 }
 

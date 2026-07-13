@@ -164,6 +164,33 @@ Salto is distributed as a self-hosted Docker application.
 - **Configuration via environment variables** documented in the README and a
   committed `.env.example`. Secrets never committed.
 
+## Distribution & Installation
+
+Gyms should not need to clone the repo or build anything to run Salto.
+
+- **Prebuilt images on GitHub Container Registry:** a GitHub Actions
+  workflow builds the Docker image and pushes it to
+  `ghcr.io/stevy2191/salto` whenever a version tag (`v*`) is pushed,
+  tagged with both the release version (e.g. `1.2.0`) and `:latest`.
+  The GHCR package is public so users can pull without authentication
+  (one-time manual step in the package settings after the first push).
+- **User-facing compose file:** the `docker-compose.yml` users deploy
+  references the GHCR image — never a local build — so updating is just
+  `docker compose pull && docker compose up -d`. Local development builds
+  use a separate `docker-compose.dev.yml` build override.
+- **`install.sh`** — interactive end-user setup script:
+  checks Docker and Docker Compose are installed (friendly errors if not),
+  asks which port to publish (default 3000), generates a random
+  `SESSION_SECRET` into `.env`, downloads the compose file (or creates it
+  if download fails), pulls the image, starts the stack, and finishes by
+  printing the URL to visit to create the admin account plus the one-line
+  update command.
+- **`uninstall.sh`** — stops and removes the stack, then asks *separately*
+  whether to delete the data volume, with a clear warning that doing so
+  permanently deletes all schedules and settings.
+- **README** documents a "Quick install" one-liner (curl the install
+  script), the update command, and uninstall instructions.
+
 ## Authentication
 
 Because instances are publicly accessible, v1 requires auth — but keep it
