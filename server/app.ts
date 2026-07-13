@@ -9,6 +9,7 @@ import { entityRoutes } from './routes/entities.ts'
 import { assignmentRoutes } from './routes/assignments.ts'
 import { settingsRoutes } from './routes/settings.ts'
 import { exampleGymRoutes } from './routes/exampleGym.ts'
+import { exportRoutes } from './routes/export.ts'
 import { ApiError } from './validate.ts'
 
 export interface AppOptions {
@@ -37,6 +38,7 @@ export function createApp(db: DatabaseSync, options: AppOptions = {}): express.E
   protectedApi.use(assignmentRoutes(db))
   protectedApi.use(settingsRoutes(db))
   protectedApi.use(exampleGymRoutes(db))
+  protectedApi.use(exportRoutes(db))
   app.use('/api', requireAuth(db), protectedApi)
 
   // Static frontend + SPA fallback. dist/ is absent in dev/tests, where only

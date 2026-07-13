@@ -299,6 +299,13 @@ export function SchedulePage() {
     <div className="space-y-4">
       <PageHeader title={sessionLabel(session)}>
         <div className="flex items-center gap-3">
+          <a
+            href={`/api/sessions/${sessionId}/export`}
+            download
+            className="min-h-10 rounded-lg bg-white px-3 py-2 text-sm font-semibold text-slate-700 ring-1 ring-slate-300 hover:bg-slate-50"
+          >
+            Export to Excel
+          </a>
           <span
             className={`text-sm ${
               saveState === 'error' ? 'font-medium text-red-600' : 'text-slate-500'
