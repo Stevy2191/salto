@@ -49,18 +49,40 @@ The solver is a pure TypeScript module with no UI dependencies, deterministic gi
 - SQLite on a mounted volume for persistence
 - Vitest for testing (property-based tests for the solver)
 
-## Deployment
+## Quick install
 
-Salto is self-hosted as a single Docker container:
+On a machine with Docker installed:
 
 ```bash
-cp .env.example .env   # optional — defaults work out of the box
-docker compose up -d
+mkdir salto && cd salto
+curl -fsSL https://raw.githubusercontent.com/Stevy2191/salto/main/install.sh | bash
 ```
 
-The app listens on the host port set by `SALTO_PORT` (default `3000`). The SQLite database lives on a named volume (`salto-data`, mounted at `/data`), so it survives container updates.
+The installer checks for Docker and Docker Compose, asks which port to use (default 3000), generates a `SESSION_SECRET` into `.env`, fetches the compose file, pulls the prebuilt image from GitHub Container Registry (`ghcr.io/stevy2191/salto`), and starts Salto. When it finishes, open the printed URL to create your admin account.
 
-Environment variables are documented in [`.env.example`](.env.example). Never commit your real `.env`.
+**Update** to the latest release:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+Your data is safe across updates — SQLite lives on the `salto-data` volume, not in the container.
+
+**Uninstall** from your install directory:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Stevy2191/salto/main/uninstall.sh | bash
+```
+
+This stops and removes the containers, then asks separately whether to delete the data volume — deleting it permanently erases all schedules and settings, so it keeps your data unless you explicitly type `yes`.
+
+## Deployment details
+
+Salto is a single container: an Express server serving both the API and the built frontend, with SQLite on the mounted `salto-data` volume. Releases are published to `ghcr.io/stevy2191/salto` (tagged with the version and `:latest`) by a GitHub Actions workflow on every `v*` tag.
+
+The committed `docker-compose.yml` references that public image, so a plain `docker compose up -d` deploys without cloning or building. For local development builds use the override: `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build`.
+
+The app listens on the host port set by `SALTO_PORT` (default `3000`). Environment variables are documented in [`.env.example`](.env.example). Never commit your real `.env`.
 
 **Behind a reverse proxy (e.g. Nginx Proxy Manager):** point the proxy at the published port and serve the app at the root of its own subdomain (e.g. `salto.example.com`). The server binds `0.0.0.0` and trusts `X-Forwarded-*` headers from one proxy hop, so secure cookies and logging work behind the proxy. No base-path support in v1.
 

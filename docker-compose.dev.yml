@@ -1,0 +1,6 @@
+# Development override: build the image locally instead of pulling from GHCR.
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+services:
+  salto:
+    build: .
+    image: salto-dev

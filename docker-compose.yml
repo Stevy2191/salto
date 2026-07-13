@@ -1,6 +1,12 @@
+# Salto — user-facing deployment. Uses the prebuilt public image; update with:
+#   docker compose pull && docker compose up -d
+# For local development builds, add the dev override:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+name: salto
+
 services:
   salto:
-    build: .
+    image: ghcr.io/stevy2191/salto:latest
     restart: unless-stopped
     ports:
       # Host port is configurable via .env; inside the container the app
@@ -9,9 +15,13 @@ services:
     environment:
       - NODE_ENV=production
       - DATA_DIR=/data
+      - SESSION_SECRET=${SESSION_SECRET:-}
     volumes:
       # SQLite lives here so data survives container updates.
       - salto-data:/data
 
 volumes:
   salto-data:
+    # Fixed name so install/uninstall scripts can refer to it regardless of
+    # the directory the compose file lives in.
+    name: salto-data
