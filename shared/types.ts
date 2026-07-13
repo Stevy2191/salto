@@ -59,6 +59,8 @@ export interface Assignment {
   eventId: number
   groupId: number
   coachId: number | null
+  /** Locked cells survive regeneration; the solver plans around them. */
+  locked?: boolean
 }
 
 /** Whether coaches travel with their group or own an event. */
