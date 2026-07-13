@@ -5,6 +5,12 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  server: {
+    proxy: {
+      // In dev, the Express API runs separately via `npm start`.
+      '/api': 'http://localhost:3000',
+    },
+  },
   test: {
     environment: 'node',
   },
