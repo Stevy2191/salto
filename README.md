@@ -78,7 +78,7 @@ This stops and removes the containers, then asks separately whether to delete th
 
 ## Deployment details
 
-Salto is a single container: an Express server serving both the API and the built frontend, with SQLite on the mounted `salto-data` volume. Releases are published to `ghcr.io/stevy2191/salto` (tagged with the version and `:latest`) by a GitHub Actions workflow on every `v*` tag.
+Salto is a single container: an Express server serving both the API and the built frontend, with SQLite on the mounted `salto-data` volume. Every push to `main` that passes the test suite is published to `ghcr.io/stevy2191/salto:latest` by a GitHub Actions workflow; `v*` tags additionally publish a version tag.
 
 The committed `docker-compose.yml` references that public image, so a plain `docker compose up -d` deploys without cloning or building. For local development builds use the override: `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build`.
 

@@ -1,13 +1,19 @@
-# Builds and publishes the Docker image to GHCR on version tags (v1.2.3 →
-# ghcr.io/stevy2191/salto:1.2.3 and :latest).
+# Builds and publishes the Docker image to GHCR, gated on the test suite.
 #
-# One-time manual step after the first release: make the package public in
+# - Every push to main publishes ghcr.io/stevy2191/salto:latest — the image
+#   users pull with `docker compose pull`.
+# - Pushing a version tag (v1.2.3) additionally publishes :1.2.3 (and moves
+#   :latest).
+#
+# One-time manual step after the first publish: make the package public in
 # GitHub → Packages → salto → Package settings → Change visibility, so users
 # can pull without authentication.
-name: Release image
+name: Publish image
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
 
@@ -16,7 +22,24 @@ permissions:
   packages: write
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm test
+
+      - run: npm run build
+
   build-and-push:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,9 +56,11 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/stevy2191/salto
+          # On main pushes only `latest` applies; on v* tags the semver tag
+          # is added as well.
           tags: |
-            type=semver,pattern={{version}}
             type=raw,value=latest
+            type=semver,pattern={{version}}
 
       - uses: docker/build-push-action@v6
         with:

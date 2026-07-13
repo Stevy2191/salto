@@ -170,10 +170,12 @@ Gyms should not need to clone the repo or build anything to run Salto.
 
 - **Prebuilt images on GitHub Container Registry:** a GitHub Actions
   workflow builds the Docker image and pushes it to
-  `ghcr.io/stevy2191/salto` whenever a version tag (`v*`) is pushed,
-  tagged with both the release version (e.g. `1.2.0`) and `:latest`.
-  The GHCR package is public so users can pull without authentication
-  (one-time manual step in the package settings after the first push).
+  `ghcr.io/stevy2191/salto`. Every push to `main` publishes `:latest`
+  (the image users pull); pushing a version tag (`v*`) additionally
+  publishes that version tag (e.g. `1.2.0`). Publishing only happens if
+  the test suite passes. The GHCR package is public so users can pull
+  without authentication (one-time manual step in the package settings
+  after the first push).
 - **User-facing compose file:** the `docker-compose.yml` users deploy
   references the GHCR image — never a local build — so updating is just
   `docker compose pull && docker compose up -d`. Local development builds
