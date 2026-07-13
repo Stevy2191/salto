@@ -40,3 +40,7 @@ lerna-debug.log*
 # Misc
 *.tsbuildinfo
 .cache/
+
+# Local reference assets (photos etc.) — never publish
+IMG_*
+*.heic
