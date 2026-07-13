@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import type { Assignment, Coach, Group, GymEvent, Session } from '../../shared/types.ts'
+import type { Assignment, Coach, Group, GymEvent, Session, Settings } from '../../shared/types.ts'
 import { slotCount, slotStart } from '../../shared/slots.ts'
 import { DAY_NAMES, apiGet, apiPut } from '../lib/api.ts'
 import { useLoad } from '../lib/useLoad.ts'
 import { CONFLICT_LABELS, assignmentKey, findConflicts } from '../lib/conflicts.ts'
 import { groupColor } from '../lib/colors.ts'
 import { textColorFor } from '../../shared/colors.ts'
+import { generateSchedule } from '../solver/solver.ts'
 import { Button, Card, ErrorNote, Field, PageHeader, Select } from '../components/ui.tsx'
 import { sessionLabel } from './SessionsPage.tsx'
 
@@ -143,6 +144,8 @@ function Chip({
   colorClass,
   customColor,
   conflictReasons,
+  locked,
+  onToggleLock,
   onRemove,
 }: {
   label: string
@@ -151,6 +154,8 @@ function Chip({
   /** Inline hex background (event color); overrides colorClass when set. */
   customColor?: string
   conflictReasons: string[] | undefined
+  locked: boolean
+  onToggleLock: () => void
   onRemove: () => void
 }) {
   const conflicted = conflictReasons !== undefined && conflictReasons.length > 0
@@ -168,19 +173,32 @@ function Chip({
           : customColor
             ? 'ring-black/10'
             : colorClass
-      }`}
+      } ${locked ? 'outline-2 -outline-offset-1 outline-slate-800' : ''}`}
     >
+      <button
+        onClick={onToggleLock}
+        aria-label={locked ? `unlock ${label}` : `lock ${label}`}
+        aria-pressed={locked}
+        title={locked ? 'Unlock — generation may move this' : 'Lock — generation keeps this in place'}
+        className={`shrink-0 rounded px-0.5 text-[11px] leading-none hover:bg-black/10 ${
+          locked ? '' : 'opacity-40 hover:opacity-100'
+        }`}
+      >
+        {locked ? '🔒' : '🔓'}
+      </button>
       <span className="min-w-0 flex-1">
         <span className="block truncate">{conflicted ? `⚠ ${label}` : label}</span>
         {sub && <span className="block truncate font-normal opacity-75">{sub}</span>}
       </span>
-      <button
-        onClick={onRemove}
-        aria-label={`remove ${label}`}
-        className="shrink-0 rounded px-1 text-sm leading-none opacity-60 hover:bg-black/10 hover:opacity-100"
-      >
-        ×
-      </button>
+      {!locked && (
+        <button
+          onClick={onRemove}
+          aria-label={`remove ${label}`}
+          className="shrink-0 rounded px-1 text-sm leading-none opacity-60 hover:bg-black/10 hover:opacity-100"
+        >
+          ×
+        </button>
+      )}
     </span>
   )
 }
@@ -196,12 +214,14 @@ export function SchedulePage() {
   const assignmentsLoad = useLoad(() =>
     apiGet<{ assignments: Assignment[] }>(`/api/sessions/${sessionId}/assignments`),
   )
+  const settingsLoad = useLoad(() => apiGet<{ settings: Settings }>('/api/settings'))
 
   const [assignments, setAssignments] = useState<Assignment[] | null>(null)
   const [view, setView] = useState<ViewMode>('events')
   const [saveState, setSaveState] = useState<SaveState>('saved')
   const [saveError, setSaveError] = useState<string | null>(null)
   const [picker, setPicker] = useState<PickerTarget | null>(null)
+  const [generationErrors, setGenerationErrors] = useState<string[] | null>(null)
 
   useEffect(() => {
     if (assignmentsLoad.data) setAssignments(assignmentsLoad.data.assignments)
@@ -233,7 +253,12 @@ export function SchedulePage() {
   }
 
   const loadError =
-    sessionLoad.error ?? eventsLoad.error ?? groupsLoad.error ?? coachesLoad.error ?? assignmentsLoad.error
+    sessionLoad.error ??
+    eventsLoad.error ??
+    groupsLoad.error ??
+    coachesLoad.error ??
+    assignmentsLoad.error ??
+    settingsLoad.error
   if (loadError) return <ErrorNote message={loadError} />
   if (!session || assignments === null) return null
 
@@ -253,6 +278,53 @@ export function SchedulePage() {
   const add = (a: Assignment) => {
     if (assignments.some((x) => assignmentKey(x) === assignmentKey(a))) return
     void persist([...assignments, a])
+  }
+
+  const toggleLock = (target: Assignment) =>
+    persist(
+      assignments.map((a) =>
+        assignmentKey(a) === assignmentKey(target) ? { ...a, locked: !a.locked } : a,
+      ),
+    )
+
+  // Generate ("Shuffle" is the same with a fresh seed): locked cells are
+  // kept and solved around; unlocked ones are replaced after a warning.
+  const generate = () => {
+    if (!session || !settingsLoad.data) return
+    const locks = assignments.filter((a) => a.locked)
+    const unlockedCount = assignments.length - locks.length
+    if (
+      unlockedCount > 0 &&
+      !confirm(
+        `Replace ${unlockedCount} unlocked assignment${unlockedCount === 1 ? '' : 's'}? ` +
+          `Locked cells (🔒) are kept. Lock anything you want to survive first.`,
+      )
+    ) {
+      return
+    }
+    const result = generateSchedule({
+      events: events.map(({ id, name, capacity, active }) => ({ id, name, capacity, active })),
+      groups: sessionGroups.map(({ id, name, priority, requiredEvents, assignedCoaches }) => ({
+        id,
+        name,
+        priority,
+        requiredEvents,
+        assignedCoaches,
+      })),
+      coaches: coaches.map(({ id, name, specialties }) => ({ id, name, specialties })),
+      slotCount: slots,
+      rotationLength: session.rotationLength,
+      coachMode: settingsLoad.data.settings.coachMode,
+      adjacencyPenalties: settingsLoad.data.settings.adjacencyPenalties,
+      locked: locks,
+      seed: Math.floor(Math.random() * 2 ** 31),
+    })
+    if (result.ok) {
+      setGenerationErrors(null)
+      void persist(result.assignments)
+    } else {
+      setGenerationErrors(result.reasons)
+    }
   }
 
   const conflictCount = conflicts.size
@@ -280,6 +352,8 @@ export function SchedulePage() {
               conflictReasons={conflicts
                 .get(assignmentKey(a))
                 ?.map((r) => CONFLICT_LABELS[r])}
+              locked={a.locked ?? false}
+              onToggleLock={() => void toggleLock(a)}
               onRemove={() => void remove(a)}
             />
           ))}
@@ -329,16 +403,47 @@ export function SchedulePage() {
         </div>
       </PageHeader>
 
-      <p className="text-sm text-slate-500">
-        {DAY_NAMES[session.dayOfWeek]} {session.startTime}–{session.endTime} · {slots} rotations of{' '}
-        {session.rotationLength} min
-        {conflictCount > 0 && (
-          <span className="ml-2 font-medium text-red-600">
-            ⚠ {conflictCount} conflicting assignment{conflictCount === 1 ? '' : 's'}
-          </span>
+      <div className="flex flex-wrap items-center gap-3">
+        {sessionGroups.length > 0 && (
+          <>
+            <Button onClick={generate}>Generate schedule</Button>
+            {assignments.length > 0 && (
+              <Button variant="secondary" onClick={generate} title="Regenerate with a new seed">
+                Shuffle
+              </Button>
+            )}
+          </>
         )}
-      </p>
+        <p className="text-sm text-slate-500">
+          {DAY_NAMES[session.dayOfWeek]} {session.startTime}–{session.endTime} · {slots} rotations
+          of {session.rotationLength} min
+          {conflictCount > 0 && (
+            <span className="ml-2 font-medium text-red-600">
+              ⚠ {conflictCount} conflicting assignment{conflictCount === 1 ? '' : 's'}
+            </span>
+          )}
+        </p>
+      </div>
       <ErrorNote message={saveError} />
+      {generationErrors && (
+        <div role="alert" className="rounded-xl bg-red-50 p-4 ring-1 ring-red-200">
+          <div className="flex items-start justify-between gap-2">
+            <p className="font-semibold text-red-800">Couldn't generate a schedule</p>
+            <button
+              onClick={() => setGenerationErrors(null)}
+              aria-label="dismiss"
+              className="rounded px-1 text-red-400 hover:bg-red-100 hover:text-red-700"
+            >
+              ×
+            </button>
+          </div>
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-red-700">
+            {generationErrors.map((reason) => (
+              <li key={reason}>{reason}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {sessionGroups.length === 0 ? (
         <Card>

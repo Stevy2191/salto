@@ -19,7 +19,8 @@ Salto — rotation scheduling for gymnastics gyms. Auto-generates conflict-free 
 
 ## Conventions
 
-- **The solver stays a pure TypeScript module** (`src/solver/`) with **no UI imports** — no React, no DOM, no component code. It must be swappable and testable in isolation. Test it exhaustively (property-based tests with fast-check per the spec).
+- **The solver stays a pure TypeScript module** (`src/solver/`) with **no UI imports and no database imports** — plain data in (`SolverInput`), a schedule or human-readable failure reasons out (`SolverResult`). It runs client-side in the browser (bundled), and results persist through the normal assignments API. It must be swappable and testable in isolation.
+- **Solver testing:** `src/solver/validate.ts` is an independent hard-constraint checker, deliberately not sharing solver internals, so tests cross-check two implementations. Property-based tests (fast-check) assert no ok result ever violates a hard constraint, failures always explain themselves, and same seed ⇒ same schedule. Keep the perf test (<2s for ~10 groups / 8 events / 12 slots) passing. Any new solver behavior needs fixture + property coverage.
 - **Run tests before every commit.**
 - **Build in the phase order from SPEC.md**: Phase 1 (CRUD + manual grid + persistence) → Phase 2 (auto-generation) → Phase 3 (day-of changes + print view). Don't start a later phase's features before the earlier phase works.
 - Nothing gym-specific is hardcoded: events, groups, coaches, and constraints are all user-defined data. Never bake in a fixed list of events or assumptions about session structure.
