@@ -150,6 +150,14 @@ describe('groups CRUD', () => {
       .expect(400)
   })
 
+  it('rejects required-event durations that are not multiples of 5', async () => {
+    await request(app)
+      .post('/api/groups')
+      .set('Cookie', cookie)
+      .send({ name: 'X', requiredEvents: [{ eventId: 1, duration: 22 }] })
+      .expect(400)
+  })
+
   it('deleting a group scrubs sessions', async () => {
     const group = (
       await request(app).post('/api/groups').set('Cookie', cookie).send({ name: 'L3' })
@@ -181,6 +189,23 @@ describe('sessions CRUD', () => {
       rotationLength: 15,
       groups: [],
     })
+  })
+
+  it('accepts any 5-minute multiple as rotation length', async () => {
+    const created = await request(app)
+      .post('/api/sessions')
+      .set('Cookie', cookie)
+      .send({ dayOfWeek: 2, startTime: '17:00', endTime: '19:05', rotationLength: 25 })
+      .expect(201)
+    expect(created.body.session.rotationLength).toBe(25)
+  })
+
+  it('rejects rotation lengths that are not multiples of 5', async () => {
+    await request(app)
+      .post('/api/sessions')
+      .set('Cookie', cookie)
+      .send({ dayOfWeek: 2, startTime: '17:00', endTime: '19:00', rotationLength: 17 })
+      .expect(400)
   })
 
   it('rejects end before start and malformed times', async () => {

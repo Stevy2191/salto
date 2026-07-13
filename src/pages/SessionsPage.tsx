@@ -91,17 +91,16 @@ function SessionForm({
             required
           />
         </Field>
-        <Field label="Rotation length (minutes)">
-          <Select
+        <Field label="Rotation length (minutes, steps of 5)">
+          <TextInput
+            type="number"
+            min={5}
+            max={240}
+            step={5}
             value={values.rotationLength}
             onChange={(e) => set('rotationLength', Number(e.target.value))}
-          >
-            {[5, 10, 15, 20, 30, 45, 60].map((n) => (
-              <option key={n} value={n}>
-                {n} min
-              </option>
-            ))}
-          </Select>
+            required
+          />
         </Field>
       </div>
       <Field label="Groups attending">

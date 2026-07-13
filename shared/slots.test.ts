@@ -30,6 +30,12 @@ describe('slotCount', () => {
     expect(slotCount({ startTime: '16:00', endTime: '18:30', rotationLength: 15 })).toBe(10)
   })
 
+  it('handles any 5-minute rotation length', () => {
+    expect(slotCount({ startTime: '16:00', endTime: '18:05', rotationLength: 25 })).toBe(5)
+    expect(slotCount({ startTime: '16:00', endTime: '17:00', rotationLength: 5 })).toBe(12)
+    expect(slotCount({ startTime: '16:00', endTime: '18:00', rotationLength: 20 })).toBe(6)
+  })
+
   it('drops a trailing partial slot', () => {
     expect(slotCount({ startTime: '16:00', endTime: '18:10', rotationLength: 15 })).toBe(8)
   })
@@ -47,5 +53,10 @@ describe('slotStart', () => {
     expect(slotStart(session, 0)).toBe('16:00')
     expect(slotStart(session, 2)).toBe('16:30')
     expect(slotStart(session, 9)).toBe('18:15')
+  })
+
+  it('labels slots for non-15-minute rotations', () => {
+    expect(slotStart({ startTime: '16:00', rotationLength: 25 }, 3)).toBe('17:15')
+    expect(slotStart({ startTime: '09:30', rotationLength: 5 }, 4)).toBe('09:50')
   })
 })

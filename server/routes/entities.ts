@@ -119,9 +119,13 @@ function parseGroup(body: unknown): {
   if (!Array.isArray(rawRequired)) throw new ApiError(400, 'requiredEvents must be an array')
   const requiredEvents = rawRequired.map((entry): RequiredEvent => {
     const e = asObject(entry)
+    const duration = reqInt(e.duration, 'requiredEvents.duration', 5, 24 * 60)
+    if (duration % 5 !== 0) {
+      throw new ApiError(400, 'requiredEvents.duration must be a multiple of 5 minutes')
+    }
     return {
       eventId: reqInt(e.eventId, 'requiredEvents.eventId', 1, Number.MAX_SAFE_INTEGER),
-      duration: reqInt(e.duration, 'requiredEvents.duration', 1, 24 * 60),
+      duration,
     }
   })
   return {
@@ -148,12 +152,17 @@ function parseSession(body: unknown): {
   if (start === null) throw new ApiError(400, 'startTime must be HH:MM')
   if (end === null) throw new ApiError(400, 'endTime must be HH:MM')
   if (end <= start) throw new ApiError(400, 'endTime must be after startTime')
+  const rotationLength =
+    obj.rotationLength === undefined ? 15 : reqInt(obj.rotationLength, 'rotationLength', 5, 240)
+  if (rotationLength % 5 !== 0) {
+    throw new ApiError(400, 'rotationLength must be a multiple of 5 minutes')
+  }
   return {
     name: optString(obj.name, 'name'),
     dayOfWeek: reqInt(obj.dayOfWeek, 'dayOfWeek', 0, 6),
     startTime,
     endTime,
-    rotationLength: obj.rotationLength === undefined ? 15 : reqInt(obj.rotationLength, 'rotationLength', 5, 240),
+    rotationLength,
     groups: intArray(obj.groups, 'groups'),
   }
 }

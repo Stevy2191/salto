@@ -327,24 +327,20 @@ export function SchedulePage() {
         </Card>
       ) : (
         <div className="overflow-x-auto pb-2">
+          {/* Day-planner orientation: events (or groups) across the top,
+              time slots down the left. */}
           <table className="border-separate border-spacing-1">
             <thead>
               <tr>
-                <th className="sticky left-0 z-[5] bg-slate-100 p-1 text-left text-xs font-semibold text-slate-500">
-                  {view === 'events' ? 'Event' : 'Group'}
+                <th className="sticky left-0 z-[5] w-16 bg-slate-100 p-1 text-left text-xs font-semibold text-slate-500">
+                  Time
                 </th>
-                {slotIndexes.map((i) => (
-                  <th key={i} className="min-w-28 p-1 text-left text-xs font-semibold text-slate-500">
-                    {slotStart(session, i)}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {view === 'events'
-                ? rowEvents.map((event) => (
-                    <tr key={event.id}>
-                      <th className="sticky left-0 z-[5] max-w-36 bg-slate-100 p-1 text-left text-sm font-semibold text-slate-800">
+                {view === 'events'
+                  ? rowEvents.map((event) => (
+                      <th
+                        key={event.id}
+                        className="min-w-28 p-1 text-left text-sm font-semibold text-slate-800"
+                      >
                         {event.name}
                         {!event.active && (
                           <span className="block text-xs font-normal text-red-500">inactive</span>
@@ -355,7 +351,25 @@ export function SchedulePage() {
                           </span>
                         )}
                       </th>
-                      {slotIndexes.map((slotIndex) =>
+                    ))
+                  : sessionGroups.map((group) => (
+                      <th
+                        key={group.id}
+                        className="min-w-28 p-1 text-left text-sm font-semibold text-slate-800"
+                      >
+                        {group.name}
+                      </th>
+                    ))}
+              </tr>
+            </thead>
+            <tbody>
+              {slotIndexes.map((slotIndex) => (
+                <tr key={slotIndex}>
+                  <th className="sticky left-0 z-[5] bg-slate-100 p-1 text-left align-top text-xs font-semibold text-slate-500">
+                    {slotStart(session, slotIndex)}
+                  </th>
+                  {view === 'events'
+                    ? rowEvents.map((event) =>
                         cellFor(
                           assignments.filter(
                             (a) => a.eventId === event.id && a.slotIndex === slotIndex,
@@ -363,15 +377,8 @@ export function SchedulePage() {
                           { slotIndex, eventId: event.id },
                           (a) => groupName(a.groupId),
                         ),
-                      )}
-                    </tr>
-                  ))
-                : sessionGroups.map((group) => (
-                    <tr key={group.id}>
-                      <th className="sticky left-0 z-[5] max-w-36 bg-slate-100 p-1 text-left text-sm font-semibold text-slate-800">
-                        {group.name}
-                      </th>
-                      {slotIndexes.map((slotIndex) =>
+                      )
+                    : sessionGroups.map((group) =>
                         cellFor(
                           assignments.filter(
                             (a) => a.groupId === group.id && a.slotIndex === slotIndex,
@@ -380,8 +387,8 @@ export function SchedulePage() {
                           (a) => eventNameOf(a.eventId),
                         ),
                       )}
-                    </tr>
-                  ))}
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
