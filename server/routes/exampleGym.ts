@@ -2,6 +2,7 @@ import { Router } from 'express'
 import type { DatabaseSync } from 'node:sqlite'
 import { ApiError } from '../validate.ts'
 import { withTransaction } from '../tx.ts'
+import { EVENT_PALETTE } from '../../shared/colors.ts'
 
 // Clearly fictional sample data so a new gym can explore the app before
 // entering its own. Every row is flagged is_sample so it can be removed
@@ -17,19 +18,22 @@ function sampleLoaded(db: DatabaseSync): boolean {
 
 function seed(db: DatabaseSync): void {
   const insertEvent = db.prepare(
-    'INSERT INTO events (name, capacity, active, is_sample) VALUES (?, ?, 1, 1)',
+    'INSERT INTO events (name, capacity, active, color, is_sample) VALUES (?, ?, 1, ?, 1)',
   )
   const eventIds: Record<string, number> = {}
-  for (const [name, capacity] of [
+  const sampleEvents = [
     ['Vault', 1],
     ['Uneven Bars', 1],
     ['Balance Beam', 1],
     ['Floor', 2],
     ['Tumble Track', 1],
     ['Conditioning', 2],
-  ] as const) {
-    eventIds[name] = Number(insertEvent.run(name, capacity).lastInsertRowid)
-  }
+  ] as const
+  sampleEvents.forEach(([name, capacity], index) => {
+    eventIds[name] = Number(
+      insertEvent.run(name, capacity, EVENT_PALETTE[index % EVENT_PALETTE.length]!).lastInsertRowid,
+    )
+  })
 
   const insertCoach = db.prepare(
     'INSERT INTO coaches (name, specialties, availability, is_sample) VALUES (?, ?, ?, 1)',

@@ -40,6 +40,10 @@ Fully user-defined — the examples below are illustrative, never a fixed list.
 - `capacity` — how many groups can use it simultaneously (usually 1; floor
   might fit 2)
 - `active` — can be marked unavailable (equipment down)
+- `color` — hex color shown everywhere the event appears (grid, Excel
+  export, print view). Users pick from a curated palette of distinct,
+  print-friendly colors or choose a custom color; new events default to
+  the next unused palette color.
 
 ### Coach
 - `name`
@@ -135,7 +139,15 @@ model before the solver is built.
   assignments with minimal disruption (prefer schedules close to the original)
 - Print view: clean, black-and-white-friendly, one page per session; big
   enough to read from across a gym. Also a per-group "where do I go next"
-  strip.
+  strip. Uses the event colors, with a black-and-white-friendly fallback
+  (color plus a pattern or the event name always present in text), since
+  many gyms print in B&W.
+- Excel export (shipped early, with the manual grid): download a session's
+  schedule as .xlsx mirroring the on-screen layout — events as columns,
+  time slots as rows, each occupied cell solid-filled with its event's
+  color, group and coach names in the cell, and white/black text chosen
+  automatically from the fill's brightness so it stays readable when
+  printed from Excel.
 - Copy a previous session's schedule as a starting point
 
 ### Later / nice-to-have (not v1)

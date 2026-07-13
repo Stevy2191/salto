@@ -2,6 +2,7 @@ import { Router } from 'express'
 import type { DatabaseSync } from 'node:sqlite'
 import type { Coach, Group, GymEvent, RequiredEvent, Session } from '../../shared/types.ts'
 import { parseTime } from '../../shared/slots.ts'
+import { isHexColor, nextPaletteColor } from '../../shared/colors.ts'
 import {
   ApiError,
   asObject,
@@ -19,6 +20,7 @@ interface EventRow {
   name: string
   capacity: number
   active: number
+  color: string
   is_sample: number
 }
 
@@ -55,6 +57,7 @@ const toEvent = (r: EventRow): GymEvent => ({
   name: r.name,
   capacity: r.capacity,
   active: r.active === 1,
+  color: r.color,
   isSample: r.is_sample === 1,
 })
 
@@ -86,13 +89,32 @@ const toSession = (r: SessionRow): Session => ({
   isSample: r.is_sample === 1,
 })
 
-function parseEvent(body: unknown): { name: string; capacity: number; active: boolean } {
+function parseEvent(body: unknown): {
+  name: string
+  capacity: number
+  active: boolean
+  color?: string
+} {
   const obj = asObject(body)
+  let color: string | undefined
+  if (obj.color !== undefined) {
+    if (!isHexColor(obj.color)) {
+      throw new ApiError(400, 'color must be a hex color like #4E79A7')
+    }
+    color = obj.color.toUpperCase()
+  }
   return {
     name: reqString(obj.name, 'name'),
     capacity: obj.capacity === undefined ? 1 : reqInt(obj.capacity, 'capacity', 1, 20),
     active: obj.active === undefined ? true : reqBool(obj.active, 'active'),
+    color,
   }
+}
+
+/** Default for new events: the next palette color not yet in use. */
+function defaultEventColor(db: DatabaseSync): string {
+  const rows = db.prepare('SELECT color FROM events').all() as { color: string }[]
+  return nextPaletteColor(rows.map((r) => r.color))
 }
 
 function parseCoach(body: unknown): { name: string; specialties: number[]; availability: number[] } {
@@ -205,8 +227,8 @@ export function entityRoutes(db: DatabaseSync): Router {
   router.post('/events', (req, res) => {
     const e = parseEvent(req.body)
     const result = db
-      .prepare('INSERT INTO events (name, capacity, active) VALUES (?, ?, ?)')
-      .run(e.name, e.capacity, e.active ? 1 : 0)
+      .prepare('INSERT INTO events (name, capacity, active, color) VALUES (?, ?, ?, ?)')
+      .run(e.name, e.capacity, e.active ? 1 : 0, e.color ?? defaultEventColor(db))
     const row = db.prepare('SELECT * FROM events WHERE id = ?').get(result.lastInsertRowid) as unknown as EventRow
     res.status(201).json({ event: toEvent(row) })
   })
@@ -214,11 +236,15 @@ export function entityRoutes(db: DatabaseSync): Router {
   router.put('/events/:id', (req, res) => {
     const id = idParam(req.params.id)
     const e = parseEvent(req.body)
-    requireRow(db.prepare('SELECT id FROM events WHERE id = ?').get(id), 'event')
-    db.prepare('UPDATE events SET name = ?, capacity = ?, active = ? WHERE id = ?').run(
+    const existing = db.prepare('SELECT color FROM events WHERE id = ?').get(id) as
+      | { color: string }
+      | undefined
+    requireRow(existing, 'event')
+    db.prepare('UPDATE events SET name = ?, capacity = ?, active = ?, color = ? WHERE id = ?').run(
       e.name,
       e.capacity,
       e.active ? 1 : 0,
+      e.color ?? existing!.color,
       id,
     )
     const row = db.prepare('SELECT * FROM events WHERE id = ?').get(id) as unknown as EventRow

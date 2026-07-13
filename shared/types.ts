@@ -5,6 +5,8 @@ export interface GymEvent {
   name: string
   capacity: number
   active: boolean
+  /** Hex color (#RRGGBB) shown wherever the event appears. */
+  color: string
   isSample: boolean
 }
 

@@ -42,6 +42,52 @@ describe('events CRUD', () => {
     expect(after.body.events).toHaveLength(0)
   })
 
+  it('auto-assigns distinct palette colors to new events', async () => {
+    const first = (
+      await request(app).post('/api/events').set('Cookie', cookie).send({ name: 'Vault' })
+    ).body.event
+    const second = (
+      await request(app).post('/api/events').set('Cookie', cookie).send({ name: 'Beam' })
+    ).body.event
+    expect(first.color).toMatch(/^#[0-9A-F]{6}$/)
+    expect(second.color).toMatch(/^#[0-9A-F]{6}$/)
+    expect(first.color).not.toBe(second.color)
+  })
+
+  it('accepts a custom color and normalizes its case', async () => {
+    const res = await request(app)
+      .post('/api/events')
+      .set('Cookie', cookie)
+      .send({ name: 'Pit', color: '#a1b2c3' })
+      .expect(201)
+    expect(res.body.event.color).toBe('#A1B2C3')
+  })
+
+  it('rejects malformed colors', async () => {
+    for (const color of ['#fff', 'red', '4E79A7', '#12345G']) {
+      await request(app)
+        .post('/api/events')
+        .set('Cookie', cookie)
+        .send({ name: 'Bad', color })
+        .expect(400)
+    }
+  })
+
+  it('keeps the existing color when an update omits it', async () => {
+    const created = (
+      await request(app)
+        .post('/api/events')
+        .set('Cookie', cookie)
+        .send({ name: 'Floor', color: '#59A14F' })
+    ).body.event
+    const updated = await request(app)
+      .put(`/api/events/${created.id}`)
+      .set('Cookie', cookie)
+      .send({ name: 'Floor Exercise' })
+      .expect(200)
+    expect(updated.body.event.color).toBe('#59A14F')
+  })
+
   it('validates capacity and name', async () => {
     await request(app).post('/api/events').set('Cookie', cookie).send({ name: '' }).expect(400)
     await request(app)

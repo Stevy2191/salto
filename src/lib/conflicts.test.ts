@@ -7,6 +7,7 @@ const event = (id: number, capacity = 1, active = true): GymEvent => ({
   name: `Event ${id}`,
   capacity,
   active,
+  color: '#4E79A7',
   isSample: false,
 })
 
