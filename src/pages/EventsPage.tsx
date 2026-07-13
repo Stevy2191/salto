@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import type { GymEvent } from '../../shared/types.ts'
+import { EVENT_PALETTE } from '../../shared/colors.ts'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api.ts'
 import { useLoad } from '../lib/useLoad.ts'
 import { Button, Card, EmptyNote, ErrorNote, Field, PageHeader, TextInput } from '../components/ui.tsx'
@@ -9,6 +10,61 @@ interface EventFormValues {
   name: string
   capacity: number
   active: boolean
+  /** null = let the server auto-assign the next unused palette color. */
+  color: string | null
+}
+
+const PALETTE_SET = new Set<string>(EVENT_PALETTE)
+
+function ColorPicker({
+  value,
+  onChange,
+}: {
+  value: string | null
+  onChange: (color: string) => void
+}) {
+  const selected = value?.toUpperCase() ?? null
+  const isCustom = selected !== null && !PALETTE_SET.has(selected)
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {EVENT_PALETTE.map((color) => (
+        <button
+          type="button"
+          key={color}
+          aria-label={`color ${color}`}
+          aria-pressed={selected === color}
+          onClick={() => onChange(color)}
+          className={`size-9 rounded-full transition-shadow ${
+            selected === color
+              ? 'ring-2 ring-slate-900 ring-offset-2'
+              : 'ring-1 ring-black/10 hover:ring-slate-400'
+          }`}
+          style={{ backgroundColor: color }}
+        />
+      ))}
+      <label
+        title="Custom color"
+        className={`relative size-9 cursor-pointer overflow-hidden rounded-full ${
+          isCustom ? 'ring-2 ring-slate-900 ring-offset-2' : 'ring-1 ring-black/10'
+        }`}
+        style={
+          isCustom
+            ? { backgroundColor: selected }
+            : { background: 'conic-gradient(red, yellow, lime, cyan, blue, magenta, red)' }
+        }
+      >
+        <input
+          type="color"
+          value={selected ?? '#888888'}
+          onChange={(e) => onChange(e.target.value.toUpperCase())}
+          className="absolute inset-0 size-full cursor-pointer opacity-0"
+          aria-label="custom color"
+        />
+      </label>
+      {value === null && <span className="text-sm text-slate-400">auto — next free color</span>}
+    </div>
+  )
 }
 
 function EventForm({
@@ -23,15 +79,18 @@ function EventForm({
   const [name, setName] = useState(initial.name)
   const [capacity, setCapacity] = useState(String(initial.capacity))
   const [active, setActive] = useState(initial.active)
+  const [color, setColor] = useState(initial.color)
   const [error, setError] = useState<string | null>(null)
 
   async function submit(e: FormEvent) {
     e.preventDefault()
     try {
-      await onSave({ name, capacity: Number(capacity), active })
+      // Omit color entirely when unset so the server auto-assigns one.
+      await onSave({ name, capacity: Number(capacity), active, color })
       setName(initial.name)
       setCapacity(String(initial.capacity))
       setActive(initial.active)
+      setColor(initial.color)
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'save failed')
@@ -78,6 +137,9 @@ function EventForm({
           )}
         </div>
       </div>
+      <Field label="Color">
+        <ColorPicker value={color} onChange={setColor} />
+      </Field>
     </form>
   )
 }
@@ -108,9 +170,9 @@ export function EventsPage() {
           Add event
         </h2>
         <EventForm
-          initial={{ name: '', capacity: 1, active: true }}
-          onSave={async (values) => {
-            await apiPost('/api/events', values)
+          initial={{ name: '', capacity: 1, active: true, color: null }}
+          onSave={async ({ color, ...rest }) => {
+            await apiPost('/api/events', color === null ? rest : { ...rest, color })
             await reload()
           }}
         />
@@ -124,8 +186,11 @@ export function EventsPage() {
                 <EventForm
                   initial={event}
                   onCancel={() => setEditingId(null)}
-                  onSave={async (values) => {
-                    await apiPut(`/api/events/${event.id}`, values)
+                  onSave={async ({ color, ...rest }) => {
+                    await apiPut(
+                      `/api/events/${event.id}`,
+                      color === null ? rest : { ...rest, color },
+                    )
                     setEditingId(null)
                     await reload()
                   }}
@@ -134,6 +199,11 @@ export function EventsPage() {
             ) : (
               <li key={event.id} className="flex flex-wrap items-center gap-2 py-3">
                 <div className="flex-1">
+                  <span
+                    className="mr-2 inline-block size-3.5 rounded-full align-middle ring-1 ring-black/10"
+                    style={{ backgroundColor: event.color }}
+                    aria-label={`color ${event.color}`}
+                  />
                   <span className="font-medium text-slate-900">{event.name}</span>
                   {event.isSample && (
                     <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700">

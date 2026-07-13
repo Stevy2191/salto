@@ -6,6 +6,7 @@ import { DAY_NAMES, apiGet, apiPut } from '../lib/api.ts'
 import { useLoad } from '../lib/useLoad.ts'
 import { CONFLICT_LABELS, assignmentKey, findConflicts } from '../lib/conflicts.ts'
 import { groupColor } from '../lib/colors.ts'
+import { textColorFor } from '../../shared/colors.ts'
 import { Button, Card, ErrorNote, Field, PageHeader, Select } from '../components/ui.tsx'
 import { sessionLabel } from './SessionsPage.tsx'
 
@@ -140,21 +141,33 @@ function Chip({
   label,
   sub,
   colorClass,
+  customColor,
   conflictReasons,
   onRemove,
 }: {
   label: string
   sub?: string
   colorClass: string
+  /** Inline hex background (event color); overrides colorClass when set. */
+  customColor?: string
   conflictReasons: string[] | undefined
   onRemove: () => void
 }) {
   const conflicted = conflictReasons !== undefined && conflictReasons.length > 0
+  const style =
+    !conflicted && customColor
+      ? { backgroundColor: customColor, color: textColorFor(customColor) }
+      : undefined
   return (
     <span
       title={conflicted ? conflictReasons.join('; ') : undefined}
+      style={style}
       className={`flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium ring-1 ${
-        conflicted ? 'bg-red-100 text-red-900 ring-2 ring-red-500' : colorClass
+        conflicted
+          ? 'bg-red-100 text-red-900 ring-2 ring-red-500'
+          : customColor
+            ? 'ring-black/10'
+            : colorClass
       }`}
     >
       <span className="min-w-0 flex-1">
@@ -230,6 +243,7 @@ export function SchedulePage() {
   const rowEvents = events.filter((e) => e.active || assignments.some((a) => a.eventId === e.id))
   const groupName = (id: number) => groups.find((g) => g.id === id)?.name ?? 'deleted group'
   const eventNameOf = (id: number) => events.find((e) => e.id === id)?.name ?? 'deleted event'
+  const eventColorOf = (id: number) => events.find((e) => e.id === id)?.color
   const coachName = (id: number | null) =>
     id === null ? undefined : (coaches.find((c) => c.id === id)?.name ?? 'deleted coach')
 
@@ -259,6 +273,10 @@ export function SchedulePage() {
               label={labelOf(a)}
               sub={coachName(a.coachId)}
               colorClass={groupColor(a.groupId)}
+              // In the By Groups view the chip answers "which event?", so it
+              // wears the event color; in By Events view the column already
+              // is the event, so chips keep group colors.
+              customColor={target.groupId !== undefined ? eventColorOf(a.eventId) : undefined}
               conflictReasons={conflicts
                 .get(assignmentKey(a))
                 ?.map((r) => CONFLICT_LABELS[r])}
@@ -350,6 +368,10 @@ export function SchedulePage() {
                             fits {event.capacity}
                           </span>
                         )}
+                        <span
+                          className="mt-1 block h-1.5 rounded-full"
+                          style={{ backgroundColor: event.color }}
+                        />
                       </th>
                     ))
                   : sessionGroups.map((group) => (
