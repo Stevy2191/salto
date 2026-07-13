@@ -1,13 +1,48 @@
 import { Router } from 'express'
 import type { DatabaseSync } from 'node:sqlite'
-import type { Settings } from '../../shared/types.ts'
-import { ApiError, asObject } from '../validate.ts'
+import type { AdjacencyPenalty, Settings } from '../../shared/types.ts'
+import { ApiError, asObject, reqInt } from '../validate.ts'
 
-function getSettings(db: DatabaseSync): Settings {
-  const row = db.prepare("SELECT value FROM settings WHERE key = 'coach_mode'").get() as
+function getValue(db: DatabaseSync, key: string): string | undefined {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as
     | { value: string }
     | undefined
-  return { coachMode: row?.value === 'event' ? 'event' : 'group' }
+  return row?.value
+}
+
+function setValue(db: DatabaseSync, key: string, value: string): void {
+  db.prepare(
+    'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+  ).run(key, value)
+}
+
+function getSettings(db: DatabaseSync): Settings {
+  let adjacencyPenalties: AdjacencyPenalty[] = []
+  const raw = getValue(db, 'adjacency_penalties')
+  if (raw) {
+    try {
+      adjacencyPenalties = JSON.parse(raw) as AdjacencyPenalty[]
+    } catch {
+      // Corrupt value — treat as unset.
+    }
+  }
+  return {
+    coachMode: getValue(db, 'coach_mode') === 'event' ? 'event' : 'group',
+    adjacencyPenalties,
+  }
+}
+
+function parsePenalties(value: unknown): AdjacencyPenalty[] {
+  if (!Array.isArray(value)) {
+    throw new ApiError(400, 'adjacencyPenalties must be an array of event pairs')
+  }
+  return value.map((entry): AdjacencyPenalty => {
+    const pair = asObject(entry)
+    return {
+      beforeEventId: reqInt(pair.beforeEventId, 'beforeEventId', 1, Number.MAX_SAFE_INTEGER),
+      afterEventId: reqInt(pair.afterEventId, 'afterEventId', 1, Number.MAX_SAFE_INTEGER),
+    }
+  })
 }
 
 export function settingsRoutes(db: DatabaseSync): Router {
@@ -19,12 +54,15 @@ export function settingsRoutes(db: DatabaseSync): Router {
 
   router.put('/settings', (req, res) => {
     const obj = asObject(req.body)
-    if (obj.coachMode !== 'group' && obj.coachMode !== 'event') {
-      throw new ApiError(400, "coachMode must be 'group' or 'event'")
+    if (obj.coachMode !== undefined) {
+      if (obj.coachMode !== 'group' && obj.coachMode !== 'event') {
+        throw new ApiError(400, "coachMode must be 'group' or 'event'")
+      }
+      setValue(db, 'coach_mode', obj.coachMode)
     }
-    db.prepare(
-      "INSERT INTO settings (key, value) VALUES ('coach_mode', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-    ).run(obj.coachMode)
+    if (obj.adjacencyPenalties !== undefined) {
+      setValue(db, 'adjacency_penalties', JSON.stringify(parsePenalties(obj.adjacencyPenalties)))
+    }
     res.json({ settings: getSettings(db) })
   })
 

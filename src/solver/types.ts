@@ -1,7 +1,9 @@
 // Solver input/output types. The solver is pure: plain data in, a schedule
 // or failure explanation out. No UI, DOM, or database imports anywhere in
 // src/solver/.
-import type { Assignment, CoachMode } from '../../shared/types.ts'
+import type { AdjacencyPenalty, Assignment, CoachMode } from '../../shared/types.ts'
+
+export type { AdjacencyPenalty }
 
 export interface SolverEvent {
   id: number
@@ -22,12 +24,6 @@ export interface SolverCoach {
   id: number
   name: string
   specialties: number[]
-}
-
-/** "Avoid `beforeEventId` immediately before `afterEventId` for one group." */
-export interface AdjacencyPenalty {
-  beforeEventId: number
-  afterEventId: number
 }
 
 export interface SolverInput {

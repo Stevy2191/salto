@@ -96,6 +96,12 @@ CREATE TABLE IF NOT EXISTS settings (
       })
     },
   },
+  {
+    name: 'assignment-locks',
+    up: (db) => {
+      db.exec('ALTER TABLE assignments ADD COLUMN locked INTEGER NOT NULL DEFAULT 0')
+    },
+  },
 ]
 
 export function runMigrations(db: DatabaseSync, upTo: number = MIGRATIONS.length): void {

@@ -66,8 +66,16 @@ export interface Assignment {
 /** Whether coaches travel with their group or own an event. */
 export type CoachMode = 'group' | 'event'
 
+/** "Avoid `beforeEventId` immediately before `afterEventId` for a group." */
+export interface AdjacencyPenalty {
+  beforeEventId: number
+  afterEventId: number
+}
+
 export interface Settings {
   coachMode: CoachMode
+  /** Configured bad back-to-back event pairs the solver tries to avoid. */
+  adjacencyPenalties: AdjacencyPenalty[]
 }
 
 export interface User {

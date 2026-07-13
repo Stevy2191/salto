@@ -2,7 +2,7 @@ import { Router } from 'express'
 import type { DatabaseSync } from 'node:sqlite'
 import type { Assignment } from '../../shared/types.ts'
 import { slotCount } from '../../shared/slots.ts'
-import { ApiError, asObject, idParam, reqInt } from '../validate.ts'
+import { ApiError, asObject, idParam, reqBool, reqInt } from '../validate.ts'
 import { withTransaction } from '../tx.ts'
 
 interface AssignmentRow {
@@ -10,6 +10,7 @@ interface AssignmentRow {
   event_id: number
   group_id: number
   coach_id: number | null
+  locked: number
 }
 
 const toAssignment = (r: AssignmentRow): Assignment => ({
@@ -17,6 +18,7 @@ const toAssignment = (r: AssignmentRow): Assignment => ({
   eventId: r.event_id,
   groupId: r.group_id,
   coachId: r.coach_id,
+  locked: r.locked === 1,
 })
 
 function parseAssignments(body: unknown, maxSlot: number): Assignment[] {
@@ -35,6 +37,7 @@ function parseAssignments(body: unknown, maxSlot: number): Assignment[] {
         a.coachId === null || a.coachId === undefined
           ? null
           : reqInt(a.coachId, 'coachId', 1, Number.MAX_SAFE_INTEGER),
+      locked: a.locked === undefined ? false : reqBool(a.locked, 'locked'),
     }
     const key = `${assignment.slotIndex}:${assignment.eventId}:${assignment.groupId}`
     if (seen.has(key)) {
@@ -54,7 +57,7 @@ export function assignmentRoutes(db: DatabaseSync): Router {
       throw new ApiError(404, 'session not found')
     }
     const rows = db
-      .prepare('SELECT slot_index, event_id, group_id, coach_id FROM assignments WHERE session_id = ? ORDER BY slot_index, event_id, group_id')
+      .prepare('SELECT slot_index, event_id, group_id, coach_id, locked FROM assignments WHERE session_id = ? ORDER BY slot_index, event_id, group_id')
       .all(sessionId) as unknown as AssignmentRow[]
     res.json({ assignments: rows.map(toAssignment) })
   })
@@ -74,10 +77,10 @@ export function assignmentRoutes(db: DatabaseSync): Router {
       withTransaction(db, () => {
         db.prepare('DELETE FROM assignments WHERE session_id = ?').run(sessionId)
         const insert = db.prepare(
-          'INSERT INTO assignments (session_id, slot_index, event_id, group_id, coach_id) VALUES (?, ?, ?, ?, ?)',
+          'INSERT INTO assignments (session_id, slot_index, event_id, group_id, coach_id, locked) VALUES (?, ?, ?, ?, ?, ?)',
         )
         for (const a of assignments) {
-          insert.run(sessionId, a.slotIndex, a.eventId, a.groupId, a.coachId)
+          insert.run(sessionId, a.slotIndex, a.eventId, a.groupId, a.coachId, a.locked ? 1 : 0)
         }
       })
     } catch (err) {

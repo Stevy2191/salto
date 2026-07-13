@@ -48,9 +48,25 @@ describe('assignments', () => {
       .get(`/api/sessions/${sessionId}/assignments`)
       .set('Cookie', cookie)
     expect(got.body.assignments).toEqual([
-      { slotIndex: 0, eventId, groupId, coachId },
-      { slotIndex: 1, eventId, groupId, coachId: null },
+      { slotIndex: 0, eventId, groupId, coachId, locked: false },
+      { slotIndex: 1, eventId, groupId, coachId: null, locked: false },
     ])
+  })
+
+  it('round-trips the locked flag', async () => {
+    await put([
+      { slotIndex: 0, eventId, groupId, coachId, locked: true },
+      { slotIndex: 1, eventId, groupId, coachId: null },
+    ]).expect(200)
+
+    const got = await request(app)
+      .get(`/api/sessions/${sessionId}/assignments`)
+      .set('Cookie', cookie)
+    expect(got.body.assignments.map((a: { locked: boolean }) => a.locked)).toEqual([true, false])
+  })
+
+  it('rejects a non-boolean locked flag', async () => {
+    await put([{ slotIndex: 0, eventId, groupId, coachId: null, locked: 'yes' }]).expect(400)
   })
 
   it('full replace removes previous assignments', async () => {
@@ -60,7 +76,9 @@ describe('assignments', () => {
     const got = await request(app)
       .get(`/api/sessions/${sessionId}/assignments`)
       .set('Cookie', cookie)
-    expect(got.body.assignments).toEqual([{ slotIndex: 3, eventId, groupId, coachId: null }])
+    expect(got.body.assignments).toEqual([
+      { slotIndex: 3, eventId, groupId, coachId: null, locked: false },
+    ])
   })
 
   it('rejects a slot index beyond the session window', async () => {

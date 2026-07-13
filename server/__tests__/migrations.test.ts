@@ -36,4 +36,18 @@ describe('migration runner', () => {
     expect(rows[1]!.color).toBe(EVENT_PALETTE[1])
     expect(rows.every((r) => isHexColor(r.color))).toBe(true)
   })
+
+  it('adds the locked column defaulting to unlocked', () => {
+    const db = openDb(':memory:')
+    db.prepare('INSERT INTO events (name, color) VALUES (?, ?)').run('Vault', '#4E79A7')
+    db.prepare('INSERT INTO groups (name) VALUES (?)').run('L3')
+    db.prepare(
+      "INSERT INTO sessions (day_of_week, start_time, end_time) VALUES (1, '16:00', '18:00')",
+    ).run()
+    db.prepare(
+      'INSERT INTO assignments (session_id, slot_index, event_id, group_id) VALUES (1, 0, 1, 1)',
+    ).run()
+    const row = db.prepare('SELECT locked FROM assignments').get() as { locked: number }
+    expect(row.locked).toBe(0)
+  })
 })

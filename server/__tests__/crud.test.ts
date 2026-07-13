@@ -290,4 +290,30 @@ describe('settings', () => {
       .send({ coachMode: 'both' })
       .expect(400)
   })
+
+  it('stores adjacency penalties and defaults to none', async () => {
+    const initial = await request(app).get('/api/settings').set('Cookie', cookie)
+    expect(initial.body.settings.adjacencyPenalties).toEqual([])
+
+    await request(app)
+      .put('/api/settings')
+      .set('Cookie', cookie)
+      .send({ adjacencyPenalties: [{ beforeEventId: 3, afterEventId: 1 }] })
+      .expect(200)
+
+    const after = await request(app).get('/api/settings').set('Cookie', cookie)
+    expect(after.body.settings.adjacencyPenalties).toEqual([
+      { beforeEventId: 3, afterEventId: 1 },
+    ])
+    // Updating one setting leaves the other untouched.
+    expect(after.body.settings.coachMode).toBe('group')
+  })
+
+  it('rejects malformed adjacency penalties', async () => {
+    await request(app)
+      .put('/api/settings')
+      .set('Cookie', cookie)
+      .send({ adjacencyPenalties: [{ beforeEventId: 'x' }] })
+      .expect(400)
+  })
 })
