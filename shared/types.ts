@@ -1,5 +1,4 @@
 // Entity types shared between the server and the frontend.
-// The server imports these type-only, so nothing here may have runtime code.
 
 export interface GymEvent {
   id: number

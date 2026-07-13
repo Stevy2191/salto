@@ -1,9 +1,15 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import express from 'express'
+import type { NextFunction, Request, Response } from 'express'
 import type { DatabaseSync } from 'node:sqlite'
-import { csrfProtect, LoginRateLimiter } from './auth.ts'
+import { csrfProtect, LoginRateLimiter, requireAuth } from './auth.ts'
 import { authRoutes } from './routes/auth.ts'
+import { entityRoutes } from './routes/entities.ts'
+import { assignmentRoutes } from './routes/assignments.ts'
+import { settingsRoutes } from './routes/settings.ts'
+import { exampleGymRoutes } from './routes/exampleGym.ts'
+import { ApiError } from './validate.ts'
 
 export interface AppOptions {
   loginLimiter?: LoginRateLimiter
@@ -25,6 +31,14 @@ export function createApp(db: DatabaseSync, options: AppOptions = {}): express.E
 
   app.use('/api', authRoutes(db, options.loginLimiter ?? new LoginRateLimiter()))
 
+  // Everything else under /api requires a logged-in admin.
+  const protectedApi = express.Router()
+  protectedApi.use(entityRoutes(db))
+  protectedApi.use(assignmentRoutes(db))
+  protectedApi.use(settingsRoutes(db))
+  protectedApi.use(exampleGymRoutes(db))
+  app.use('/api', requireAuth(db), protectedApi)
+
   // Static frontend + SPA fallback. dist/ is absent in dev/tests, where only
   // the API is exercised.
   const distDir = path.resolve(import.meta.dirname, '../dist')
@@ -38,6 +52,24 @@ export function createApp(db: DatabaseSync, options: AppOptions = {}): express.E
       return
     }
     res.sendFile(path.join(distDir, 'index.html'))
+  })
+
+  app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
+    if (res.headersSent) {
+      next(err)
+      return
+    }
+    if (err instanceof ApiError) {
+      res.status(err.status).json({ error: err.message })
+      return
+    }
+    // Malformed JSON bodies surface here from express.json().
+    if (err instanceof SyntaxError && 'status' in err && err.status === 400) {
+      res.status(400).json({ error: 'invalid JSON body' })
+      return
+    }
+    console.error(err)
+    res.status(500).json({ error: 'internal server error' })
   })
 
   return app
