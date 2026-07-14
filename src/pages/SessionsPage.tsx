@@ -12,6 +12,7 @@ import {
   EmptyNote,
   ErrorNote,
   Field,
+  FieldGroup,
   PageHeader,
   Select,
   TextInput,
@@ -103,13 +104,13 @@ export function SessionForm({
           />
         </Field>
       </div>
-      <Field label="Groups attending">
+      <FieldGroup label="Groups attending">
         <ChipPicker
           options={groups.map((g) => ({ id: g.id, label: g.name }))}
           selected={values.groups}
           onChange={(ids) => set('groups', ids)}
         />
-      </Field>
+      </FieldGroup>
       <div className="flex gap-2">
         <Button type="submit">Save</Button>
         {onCancel && (

@@ -4,7 +4,7 @@ import type { GymEvent } from '../../shared/types.ts'
 import { EVENT_PALETTE } from '../../shared/colors.ts'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api.ts'
 import { useLoad } from '../lib/useLoad.ts'
-import { Button, Card, EmptyNote, ErrorNote, Field, PageHeader, TextInput } from '../components/ui.tsx'
+import { Button, Card, EmptyNote, ErrorNote, Field, FieldGroup, PageHeader, TextInput } from '../components/ui.tsx'
 
 export interface EventFormValues {
   name: string
@@ -137,9 +137,9 @@ export function EventForm({
           )}
         </div>
       </div>
-      <Field label="Color">
+      <FieldGroup label="Color">
         <ColorPicker value={color} onChange={setColor} />
-      </Field>
+      </FieldGroup>
     </form>
   )
 }

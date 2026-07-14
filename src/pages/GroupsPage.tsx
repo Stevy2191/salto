@@ -10,6 +10,7 @@ import {
   EmptyNote,
   ErrorNote,
   Field,
+  FieldGroup,
   PageHeader,
   Select,
   TextInput,
@@ -149,16 +150,16 @@ export function GroupForm({
           />
         </Field>
       </div>
-      <Field label="Required events per session">
+      <FieldGroup label="Required events per session">
         <RequiredEventsEditor value={requiredEvents} events={events} onChange={setRequiredEvents} />
-      </Field>
-      <Field label="Assigned coaches">
+      </FieldGroup>
+      <FieldGroup label="Assigned coaches">
         <ChipPicker
           options={coaches.map((c) => ({ id: c.id, label: c.name }))}
           selected={assignedCoaches}
           onChange={setAssignedCoaches}
         />
-      </Field>
+      </FieldGroup>
       <div className="flex gap-2">
         <Button type="submit">Save</Button>
         {onCancel && (

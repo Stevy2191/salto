@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import type { Assignment, Coach, Group, GymEvent, Session, Settings } from '../../shared/types.ts'
 import { slotCount, slotStart } from '../../shared/slots.ts'
 import { DAY_NAMES, apiGet, apiPut } from '../lib/api.ts'
@@ -9,8 +9,97 @@ import { groupColor } from '../lib/colors.ts'
 import { textColorFor } from '../../shared/colors.ts'
 import { generateSchedule } from '../solver/solver.ts'
 import { describeRepairChanges, repairSchedule } from '../solver/repair.ts'
-import { Button, Card, ChipPicker, ErrorNote, Field, PageHeader, Select } from '../components/ui.tsx'
+import { apiPost } from '../lib/api.ts'
+import {
+  Button,
+  Card,
+  ChipPicker,
+  ErrorNote,
+  Field,
+  FieldGroup,
+  PageHeader,
+  Select,
+  TextInput,
+} from '../components/ui.tsx'
 import { sessionLabel } from './SessionsPage.tsx'
+
+function CopySessionDialog({
+  session,
+  onClose,
+  onCopied,
+}: {
+  session: Session
+  onClose: () => void
+  onCopied: (newSessionId: number) => void
+}) {
+  const [name, setName] = useState(`${sessionLabel(session)} (copy)`)
+  const [dayOfWeek, setDayOfWeek] = useState((session.dayOfWeek + 1) % 7)
+  const [startTime, setStartTime] = useState(session.startTime)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const create = async () => {
+    setBusy(true)
+    try {
+      const res = await apiPost<{ session: Session }>(`/api/sessions/${session.id}/copy`, {
+        name,
+        dayOfWeek,
+        startTime,
+      })
+      onCopied(res.session.id)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'copy failed')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-10 flex items-end justify-center bg-black/30 p-4 sm:items-center"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-sm space-y-3 rounded-xl bg-white p-4 shadow-lg"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 className="font-semibold text-slate-900">Copy this session</h2>
+        <p className="text-sm text-slate-600">
+          Same groups, rotation length, duration, and schedule — pick when it happens. Copied
+          assignments arrive unlocked.
+        </p>
+        <ErrorNote message={error} />
+        <Field label="Name">
+          <TextInput value={name} onChange={(e) => setName(e.target.value)} />
+        </Field>
+        <Field label="Day">
+          <Select value={dayOfWeek} onChange={(e) => setDayOfWeek(Number(e.target.value))}>
+            {DAY_NAMES.map((day, i) => (
+              <option key={i} value={i}>
+                {day}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Starts">
+          <TextInput
+            type="time"
+            value={startTime}
+            onChange={(e) => setStartTime(e.target.value)}
+            required
+          />
+        </Field>
+        <div className="flex gap-2">
+          <Button disabled={busy} onClick={() => void create()}>
+            Create copy
+          </Button>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 type SaveState = 'saved' | 'saving' | 'error'
 type ViewMode = 'events' | 'groups'
@@ -219,6 +308,8 @@ export function SchedulePage() {
   const sessionId = Number(params.id)
   const [searchParams, setSearchParams] = useSearchParams()
   const showWelcome = searchParams.get('welcome') === '1'
+  const navigate = useNavigate()
+  const [copyOpen, setCopyOpen] = useState(false)
 
   const sessionLoad = useLoad(() => apiGet<{ session: Session }>(`/api/sessions/${sessionId}`))
   const eventsLoad = useLoad(() => apiGet<{ events: GymEvent[] }>('/api/events'))
@@ -569,6 +660,12 @@ export function SchedulePage() {
       )}
       <PageHeader title={sessionLabel(session)}>
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => setCopyOpen(true)}
+            className="min-h-10 rounded-lg bg-white px-3 py-2 text-sm font-semibold text-slate-700 ring-1 ring-slate-300 hover:bg-slate-50"
+          >
+            Copy session
+          </button>
           <Link
             to={`/sessions/${sessionId}/print`}
             className="min-h-10 rounded-lg bg-white px-3 py-2 text-sm font-semibold text-slate-700 ring-1 ring-slate-300 hover:bg-slate-50"
@@ -641,15 +738,15 @@ export function SchedulePage() {
           )}
         </summary>
         <div className="mt-3 space-y-3">
-          <Field label="Coaches out for this session">
+          <FieldGroup label="Coaches out for this session">
             <ChipPicker
               tone="amber"
               options={coaches.map((c) => ({ id: c.id, label: c.name }))}
               selected={session.absentCoaches}
               onChange={(ids) => void setOutages(ids, session.unavailableEvents)}
             />
-          </Field>
-          <Field label="Events out for this session">
+          </FieldGroup>
+          <FieldGroup label="Events out for this session">
             <ChipPicker
               tone="amber"
               options={events
@@ -658,7 +755,7 @@ export function SchedulePage() {
               selected={session.unavailableEvents}
               onChange={(ids) => void setOutages(session.absentCoaches, ids)}
             />
-          </Field>
+          </FieldGroup>
           {outagesActive && (
             <div className="flex flex-wrap items-center gap-3">
               <Button onClick={repair}>Repair schedule</Button>
@@ -790,6 +887,13 @@ export function SchedulePage() {
         </div>
       )}
 
+      {copyOpen && (
+        <CopySessionDialog
+          session={session}
+          onClose={() => setCopyOpen(false)}
+          onCopied={(newId) => navigate(`/sessions/${newId}/schedule`)}
+        />
+      )}
       {picker && session && (
         <AssignmentPicker
           target={picker}

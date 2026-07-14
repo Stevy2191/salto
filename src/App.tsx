@@ -1,4 +1,4 @@
-import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Route, Routes, useParams } from 'react-router-dom'
 import { AuthProvider } from './auth/AuthContext.tsx'
 import { LoginPage } from './auth/LoginPage.tsx'
 import { SetupPage } from './auth/SetupPage.tsx'
@@ -11,6 +11,13 @@ import { SessionsPage } from './pages/SessionsPage.tsx'
 import { SchedulePage } from './pages/SchedulePage.tsx'
 import { SetupWizard } from './pages/SetupWizard.tsx'
 import { PrintPage } from './pages/PrintPage.tsx'
+
+// Remount the schedule editor when the session id changes (e.g. after
+// "Copy session" navigates to the copy) so all loaders refetch.
+function KeyedSchedulePage() {
+  const { id } = useParams()
+  return <SchedulePage key={id} />
+}
 
 function App() {
   return (
@@ -25,7 +32,7 @@ function App() {
             <Route path="/coaches" element={<CoachesPage />} />
             <Route path="/groups" element={<GroupsPage />} />
             <Route path="/sessions" element={<SessionsPage />} />
-            <Route path="/sessions/:id/schedule" element={<SchedulePage />} />
+            <Route path="/sessions/:id/schedule" element={<KeyedSchedulePage />} />
             <Route path="/sessions/:id/print" element={<PrintPage />} />
             <Route path="/guide/:step?" element={<SetupWizard />} />
           </Route>

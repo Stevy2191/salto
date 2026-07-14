@@ -54,6 +54,20 @@ export function Field({ label, children }: { label: string; children: ReactNode 
   )
 }
 
+/**
+ * Like Field, but for groups of controls (chip pickers, editors) — a
+ * <label> wrapper would steal their accessible names and forward label
+ * clicks to the first button.
+ */
+export function FieldGroup({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div>
+      <span className="mb-1 block text-sm font-medium text-slate-700">{label}</span>
+      {children}
+    </div>
+  )
+}
+
 export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
     <div className={`rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200 ${className}`}>

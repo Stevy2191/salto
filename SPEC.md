@@ -109,6 +109,9 @@ session.
 
 ## Features by Phase
 
+> **Status:** Phases 1–3 below are implemented — v1 is feature-complete.
+> Remaining ideas live under "Later / nice-to-have".
+
 ### Phase 1 — Setup & manual grid (walking skeleton)
 - CRUD for events, coaches, groups, sessions
 - **First-run experience:** a new gym sees an empty database. Provide a

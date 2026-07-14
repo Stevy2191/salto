@@ -10,6 +10,7 @@ import {
   EmptyNote,
   ErrorNote,
   Field,
+  FieldGroup,
   PageHeader,
   TextInput,
 } from '../components/ui.tsx'
@@ -55,20 +56,20 @@ export function CoachForm({
       <Field label="Coach name">
         <TextInput value={name} onChange={(e) => setName(e.target.value)} required />
       </Field>
-      <Field label="Specialties (events they can coach)">
+      <FieldGroup label="Specialties (events they can coach)">
         <ChipPicker
           options={events.map((e) => ({ id: e.id, label: e.name }))}
           selected={specialties}
           onChange={setSpecialties}
         />
-      </Field>
-      <Field label="Works on">
+      </FieldGroup>
+      <FieldGroup label="Works on">
         <ChipPicker
           options={DAY_NAMES.map((day, i) => ({ id: i, label: day.slice(0, 3) }))}
           selected={availability}
           onChange={setAvailability}
         />
-      </Field>
+      </FieldGroup>
       <div className="flex gap-2">
         <Button type="submit">Save</Button>
         {onCancel && (

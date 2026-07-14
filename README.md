@@ -12,6 +12,8 @@ Salto is a general-purpose product: every gym defines its own events/stations, e
 
 ## Features
 
+All three phases below are implemented — **v1 is feature-complete**.
+
 **Phase 1 — Setup & manual grid**
 - CRUD for events, coaches, groups, and sessions
 - Guided first-run setup, plus a one-click (and one-click-removable) example gym
@@ -28,9 +30,10 @@ Salto is a general-purpose product: every gym defines its own events/stations, e
 - Lock cells and regenerate around them
 
 **Phase 3 — Day-of changes & output**
-- Mark a coach absent or an event down and regenerate with minimal disruption
-- Print view: black-and-white-friendly, one page per session, readable from across a gym; per-group "where do I go next" strips
-- Copy a previous session's schedule as a starting point
+- Mark a coach absent or an event out for a single session; affected cells are flagged, and "Repair schedule" fixes only what the outage touches — with a plain-language summary of what changed
+- Print view: black-and-white-friendly block layout in the event colors, plus per-group "where do I go next" strips for handing to coaches
+- Colored Excel export matching gyms' hand-made sheets
+- Copy a session — same groups, schedule, and duration on a new day/time — as a starting point
 
 ## How scheduling works
 
