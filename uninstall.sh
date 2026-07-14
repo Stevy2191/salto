@@ -54,5 +54,5 @@ else
 fi
 
 bold "Salto has been uninstalled."
-note "Leftovers you may remove yourself: this directory's .env and docker-compose.yml,"
-note "and the image (docker image rm ghcr.io/stevy2191/salto:latest)."
+note "Leftovers you may remove yourself: this directory (.env, docker-compose.yml,"
+note "MANAGE.md, the scripts) and the image (docker image rm ghcr.io/stevy2191/salto:latest)."

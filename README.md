@@ -61,23 +61,16 @@ mkdir salto && cd salto
 curl -fsSL https://raw.githubusercontent.com/Stevy2191/salto/main/install.sh | bash
 ```
 
-The installer checks for Docker and Docker Compose, asks which port to use (default 3000), generates a `SESSION_SECRET` into `.env`, fetches the compose file, pulls the prebuilt image from GitHub Container Registry (`ghcr.io/stevy2191/salto`), and starts Salto. When it finishes, open the printed URL to create your admin account.
+The installer checks for Docker and Docker Compose, asks which port to use (default 3000), generates a `SESSION_SECRET` into `.env`, pulls the prebuilt image from GitHub Container Registry (`ghcr.io/stevy2191/salto`), and starts Salto. When it finishes, open the printed URL to create your admin account.
 
-**Update** to the latest release:
+After installation the directory is **self-sufficient** — it contains `install.sh`, `uninstall.sh`, `docker-compose.yml`, `.env`, and a short `MANAGE.md` documenting the lifecycle commands, so you never need to come back to this repo to manage the app:
 
-```bash
-docker compose pull && docker compose up -d
-```
+- **Update**: `docker compose pull && docker compose up -d`
+- **Stop / start / logs**: `docker compose stop` / `docker compose up -d` / `docker compose logs -f`
+- **Repair or update the install itself**: `./install.sh` — safe to re-run; it never touches your `.env` or data, just refreshes the scripts/compose file and pulls the latest image
+- **Uninstall**: `./uninstall.sh` — stops and removes the containers, then asks separately (type `yes`) before deleting the `salto-data` volume, which permanently erases all schedules and settings
 
-Your data is safe across updates — SQLite lives on the `salto-data` volume, not in the container.
-
-**Uninstall** from your install directory:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Stevy2191/salto/main/uninstall.sh | bash
-```
-
-This stops and removes the containers, then asks separately whether to delete the data volume — deleting it permanently erases all schedules and settings, so it keeps your data unless you explicitly type `yes`.
+Your data lives on the `salto-data` Docker volume, not in the install directory — `MANAGE.md` includes a one-line backup/restore command for it.
 
 ## Deployment details
 

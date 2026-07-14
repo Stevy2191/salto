@@ -38,8 +38,39 @@ jobs:
 
       - run: npm run build
 
+  # Happy-path check of the end-user installer: files land in the install
+  # dir, the stack comes up healthy, and uninstall removes it again.
+  install-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image under the public tag
+        run: docker build -t ghcr.io/stevy2191/salto:latest .
+
+      - name: Install, verify, uninstall
+        run: |
+          mkdir -p /tmp/salto-install && cd /tmp/salto-install
+          SALTO_REPO_RAW="file://$GITHUB_WORKSPACE" SALTO_PORT=3999 \
+            bash "$GITHUB_WORKSPACE/install.sh"
+          for f in install.sh uninstall.sh docker-compose.yml .env MANAGE.md; do
+            test -f "$f" || { echo "missing $f"; exit 1; }
+          done
+          test -x install.sh && test -x uninstall.sh
+          curl -fsS --retry 15 --retry-delay 1 --retry-all-errors \
+            http://localhost:3999/api/health | grep -q '"ok"'
+          # Re-run must keep the secret and stay healthy (repair mode).
+          secret_before=$(sed -n 's/^SESSION_SECRET=//p' .env)
+          SALTO_REPO_RAW="file://$GITHUB_WORKSPACE" SALTO_PORT=3999 bash install.sh
+          [ "$(sed -n 's/^SESSION_SECRET=//p' .env)" = "$secret_before" ]
+          curl -fsS http://localhost:3999/api/health | grep -q '"ok"'
+          SALTO_DELETE_DATA=yes bash uninstall.sh
+          if docker volume inspect salto-data >/dev/null 2>&1; then
+            echo "volume should be gone"; exit 1
+          fi
+
   build-and-push:
-    needs: test
+    needs: [test, install-check]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
