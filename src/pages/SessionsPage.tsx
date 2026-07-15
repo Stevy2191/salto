@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link } from 'react-router-dom'
-import type { Group, Session } from '../../shared/types.ts'
+import type { GymClass, Session } from '../../shared/types.ts'
 import { slotCount } from '../../shared/slots.ts'
 import { DAY_NAMES, apiDelete, apiGet, apiPost, apiPut } from '../lib/api.ts'
 import { useLoad } from '../lib/useLoad.ts'
@@ -24,17 +24,17 @@ export interface SessionFormValues {
   startTime: string
   endTime: string
   rotationLength: number
-  groups: number[]
+  classes: number[]
 }
 
 export function SessionForm({
   initial,
-  groups,
+  classes,
   onSave,
   onCancel,
 }: {
   initial: SessionFormValues
-  groups: Group[]
+  classes: GymClass[]
   onSave: (values: SessionFormValues) => Promise<void>
   onCancel?: () => void
 }) {
@@ -104,11 +104,11 @@ export function SessionForm({
           />
         </Field>
       </div>
-      <FieldGroup label="Groups attending">
+      <FieldGroup label="Classes attending">
         <ChipPicker
-          options={groups.map((g) => ({ id: g.id, label: g.name }))}
-          selected={values.groups}
-          onChange={(ids) => set('groups', ids)}
+          options={classes.map((c) => ({ id: c.id, label: c.name }))}
+          selected={values.classes}
+          onChange={(ids) => set('classes', ids)}
         />
       </FieldGroup>
       <div className="flex gap-2">
@@ -129,12 +129,12 @@ export function sessionLabel(session: Session): string {
 
 export function SessionsPage() {
   const sessionsLoad = useLoad(() => apiGet<{ sessions: Session[] }>('/api/sessions'))
-  const groupsLoad = useLoad(() => apiGet<{ groups: Group[] }>('/api/groups'))
+  const classesLoad = useLoad(() => apiGet<{ classes: GymClass[] }>('/api/classes'))
   const [editingId, setEditingId] = useState<number | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
 
   const sessions = sessionsLoad.data?.sessions ?? []
-  const groups = groupsLoad.data?.groups ?? []
+  const classes = classesLoad.data?.classes ?? []
 
   async function remove(session: Session) {
     if (!confirm(`Delete "${sessionLabel(session)}" and its schedule?`)) return
@@ -153,20 +153,20 @@ export function SessionsPage() {
     startTime: '16:00',
     endTime: '18:00',
     rotationLength: 15,
-    groups: [],
+    classes: [],
   }
 
   return (
     <div className="space-y-4">
       <PageHeader title="Sessions" />
-      <ErrorNote message={sessionsLoad.error ?? groupsLoad.error ?? actionError} />
+      <ErrorNote message={sessionsLoad.error ?? classesLoad.error ?? actionError} />
       <Card>
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
           Add session
         </h2>
         <SessionForm
           initial={emptyForm}
-          groups={groups}
+          classes={classes}
           onSave={async (values) => {
             await apiPost('/api/sessions', values)
             await sessionsLoad.reload()
@@ -181,7 +181,7 @@ export function SessionsPage() {
               <li key={session.id} className="py-3">
                 <SessionForm
                   initial={session}
-                  groups={groups}
+                  classes={classes}
                   onCancel={() => setEditingId(null)}
                   onSave={async (values) => {
                     await apiPut(`/api/sessions/${session.id}`, values)
@@ -202,7 +202,7 @@ export function SessionsPage() {
                   <p className="text-sm text-slate-500">
                     {DAY_NAMES[session.dayOfWeek]} {session.startTime}–{session.endTime} ·{' '}
                     {slotCount(session)} rotations of {session.rotationLength} min ·{' '}
-                    {session.groups.length} group{session.groups.length === 1 ? '' : 's'}
+                    {session.classes.length} class{session.classes.length === 1 ? '' : 'es'}
                   </p>
                 </div>
                 <Link

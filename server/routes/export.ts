@@ -16,7 +16,7 @@ const DAY_NAMES = [
 ] as const
 
 // Styling matched to the reference sheet (hand-made gym schedule photo):
-// bright yellow group header, medium-gray time column, thin black gridlines
+// bright yellow class header, medium-gray time column, thin black gridlines
 // through blocks with medium borders at block boundaries, labels flush left.
 const HEADER_FILL = '#FFFF00'
 const TIME_FILL = '#BFBFBF'
@@ -68,9 +68,9 @@ function timeLabel(hhmm: string): string {
 }
 
 /**
- * One group's column, sliced into blocks: consecutive slots on the same
- * event with the same coach. Each group's blocks stand alone — rotation
- * boundaries may be staggered across groups.
+ * One class's column, sliced into blocks: consecutive slots on the same
+ * event with the same coach. Each class's blocks stand alone — rotation
+ * boundaries may be staggered across classes.
  */
 interface CellBlock {
   startSlot: number
@@ -79,7 +79,7 @@ interface CellBlock {
   color: string
 }
 
-function blocksForGroup(
+function blocksForClass(
   slots: number,
   cellsBySlot: Map<number, AssignmentRow[]>,
   eventName: (id: number) => string,
@@ -142,20 +142,20 @@ export function exportRoutes(db: DatabaseSync): Router {
       )
       .all(sessionId) as unknown as AssignmentRow[]
 
-    // Columns: the session's groups in their stored order, plus any group
+    // Columns: the session's classes in their stored order, plus any class
     // that has assignments here (e.g. removed from the session later).
-    const groupNamesById = new Map(
+    const classNamesById = new Map(
       (db.prepare('SELECT id, name FROM groups').all() as { id: number; name: string }[]).map(
         (g) => [g.id, g.name],
       ),
     )
-    const sessionGroupIds = JSON.parse(session.groups) as number[]
-    const columnGroupIds = [
-      ...sessionGroupIds,
+    const sessionClassIds = JSON.parse(session.groups) as number[]
+    const columnClassIds = [
+      ...sessionClassIds,
       ...[...new Set(assignments.map((a) => a.group_id))].filter(
-        (id) => !sessionGroupIds.includes(id),
+        (id) => !sessionClassIds.includes(id),
       ),
-    ].filter((id) => groupNamesById.has(id))
+    ].filter((id) => classNamesById.has(id))
 
     const events = db
       .prepare('SELECT id, name, color FROM events')
@@ -172,7 +172,7 @@ export function exportRoutes(db: DatabaseSync): Router {
     const sheet = workbook.addWorksheet(sheetName(label), {
       pageSetup: { orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
     })
-    const columnCount = 1 + columnGroupIds.length
+    const columnCount = 1 + columnClassIds.length
     const slots = slotCount(window)
     const HEADER_ROW = 3
     const FIRST_SLOT_ROW = 4
@@ -188,16 +188,16 @@ export function exportRoutes(db: DatabaseSync): Router {
     subtitle.value = `${DAY_NAMES[session.day_of_week]} · ${session.start_time}–${session.end_time} · ${session.rotation_length}-minute rotations`
     subtitle.font = { size: 11, color: { argb: 'FF555555' } }
 
-    // Row 3: group names, bold on a yellow highlight.
+    // Row 3: class names, bold on a yellow highlight.
     const headerRow = sheet.getRow(HEADER_ROW)
     headerRow.getCell(1).value = 'Time'
     headerRow.getCell(1).fill = solidFill(TIME_FILL)
     headerRow.getCell(1).font = { bold: true }
     headerRow.getCell(1).alignment = { horizontal: 'right' }
     headerRow.getCell(1).border = { top: thin, left: thin, right: thin, bottom: medium }
-    columnGroupIds.forEach((groupId, i) => {
+    columnClassIds.forEach((classId, i) => {
       const cell = headerRow.getCell(i + 2)
-      cell.value = groupNamesById.get(groupId)!
+      cell.value = classNamesById.get(classId)!
       cell.fill = solidFill(HEADER_FILL)
       cell.font = { bold: true }
       cell.alignment = { horizontal: 'left' }
@@ -227,18 +227,18 @@ export function exportRoutes(db: DatabaseSync): Router {
       cell.alignment = { horizontal: 'right', vertical: 'top' }
     }
 
-    // Group columns, each rendered independently from its own assignments —
-    // block starts/ends may be staggered arbitrarily across groups.
-    columnGroupIds.forEach((groupId, i) => {
+    // Class columns, each rendered independently from its own assignments —
+    // block starts/ends may be staggered arbitrarily across classes.
+    columnClassIds.forEach((classId, i) => {
       const column = i + 2
       const cellsBySlot = new Map<number, AssignmentRow[]>()
       for (const a of assignments) {
-        if (a.group_id !== groupId) continue
+        if (a.group_id !== classId) continue
         const list = cellsBySlot.get(a.slot_index)
         if (list) list.push(a)
         else cellsBySlot.set(a.slot_index, [a])
       }
-      const blocks = blocksForGroup(slots, cellsBySlot, eventName, eventColor, (id) =>
+      const blocks = blocksForClass(slots, cellsBySlot, eventName, eventColor, (id) =>
         coachNamesById.get(id),
       )
       for (const block of blocks) {

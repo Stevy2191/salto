@@ -11,8 +11,8 @@ let cookie: string
 let sessionId: number
 let vaultId: number
 let beamId: number
-let groupAId: number
-let groupBId: number
+let classAId: number
+let classBId: number
 let coachId: number
 
 const VAULT_COLOR = '#E15759' // medium-dark → white text
@@ -57,12 +57,12 @@ beforeEach(async () => {
       .set('Cookie', cookie)
       .send({ name: 'Beam', color: BEAM_COLOR, capacity: 2 })
   ).body.event.id
-  groupAId = (
-    await request(app).post('/api/groups').set('Cookie', cookie).send({ name: 'Level 3 Girls' })
-  ).body.group.id
-  groupBId = (
-    await request(app).post('/api/groups').set('Cookie', cookie).send({ name: 'Boys Team' })
-  ).body.group.id
+  classAId = (
+    await request(app).post('/api/classes').set('Cookie', cookie).send({ name: 'Level 3 Girls' })
+  ).body.class.id
+  classBId = (
+    await request(app).post('/api/classes').set('Cookie', cookie).send({ name: 'Boys Team' })
+  ).body.class.id
   coachId = (
     await request(app).post('/api/coaches').set('Cookie', cookie).send({ name: 'Dana Marsh' })
   ).body.coach.id
@@ -77,22 +77,22 @@ beforeEach(async () => {
         startTime: '16:00',
         endTime: '17:00',
         rotationLength: 15,
-        groups: [groupAId, groupBId],
+        classes: [classAId, classBId],
       })
   ).body.session.id
-  // Group A: Vault (2 slots, coached) then Beam (2 slots).
-  // Group B: Beam slots 1–2 — staggered against A's boundaries.
+  // Class A: Vault (2 slots, coached) then Beam (2 slots).
+  // Class B: Beam slots 1–2 — staggered against A's boundaries.
   await request(app)
     .put(`/api/sessions/${sessionId}/assignments`)
     .set('Cookie', cookie)
     .send({
       assignments: [
-        { slotIndex: 0, eventId: vaultId, groupId: groupAId, coachId },
-        { slotIndex: 1, eventId: vaultId, groupId: groupAId, coachId },
-        { slotIndex: 2, eventId: beamId, groupId: groupAId, coachId: null },
-        { slotIndex: 3, eventId: beamId, groupId: groupAId, coachId: null },
-        { slotIndex: 1, eventId: beamId, groupId: groupBId, coachId: null },
-        { slotIndex: 2, eventId: beamId, groupId: groupBId, coachId: null },
+        { slotIndex: 0, eventId: vaultId, classId: classAId, coachId },
+        { slotIndex: 1, eventId: vaultId, classId: classAId, coachId },
+        { slotIndex: 2, eventId: beamId, classId: classAId, coachId: null },
+        { slotIndex: 3, eventId: beamId, classId: classAId, coachId: null },
+        { slotIndex: 1, eventId: beamId, classId: classBId, coachId: null },
+        { slotIndex: 2, eventId: beamId, classId: classBId, coachId: null },
       ],
     })
     .expect(200)
@@ -104,14 +104,14 @@ describe('Excel export', () => {
     await request(app).get('/api/sessions/999/export').set('Cookie', cookie).expect(404)
   })
 
-  it('lays out groups as columns and times as rows', async () => {
+  it('lays out classes as columns and times as rows', async () => {
     const { res, sheet } = await downloadSheet()
     expect(res.headers['content-disposition']).toContain('salto-monday-practice.xlsx')
 
     expect(sheet.getCell('A1').value).toBe('Monday Practice')
     expect(String(sheet.getCell('A2').value)).toContain('Monday · 16:00–17:00')
 
-    // Group header row: names in bold on the yellow highlight.
+    // Class header row: names in bold on the yellow highlight.
     expect(sheet.getCell('B3').value).toBe('Level 3 Girls')
     expect(sheet.getCell('C3').value).toBe('Boys Team')
     for (const ref of ['B3', 'C3']) {
@@ -138,7 +138,7 @@ describe('Excel export', () => {
   it('writes multi-slot blocks with the label only in the first cell', async () => {
     const { sheet } = await downloadSheet()
 
-    // Group A's vault block spans rows 4–5.
+    // Class A's vault block spans rows 4–5.
     expect(sheet.getCell('B4').value).toBe('Vault\nDana Marsh')
     expect(sheet.getCell('B5').value).toBeNull()
     // …but the continuation keeps the event's fill.
@@ -164,17 +164,17 @@ describe('Excel export', () => {
 
   it('keeps thin gridlines on empty cells', async () => {
     const { sheet } = await downloadSheet()
-    // Group B is idle at 16:00 — bordered but unfilled, like the photo.
+    // Class B is idle at 16:00 — bordered but unfilled, like the photo.
     const cell = sheet.getCell('C4')
     expectUnfilled(cell)
     expect(cell.border?.top?.style).toBe('thin')
     expect(cell.border?.left?.style).toBe('thin')
   })
 
-  it('renders each group column independently with staggered boundaries', async () => {
+  it('renders each class column independently with staggered boundaries', async () => {
     const { sheet } = await downloadSheet()
 
-    // Group B starts at :15 while Group A is mid-block.
+    // Class B starts at :15 while Class A is mid-block.
     expect(sheet.getCell('C4').value).toBeNull()
     expectUnfilled(sheet.getCell('C4'))
     expect(sheet.getCell('C5').value).toBe('Beam')
@@ -202,8 +202,8 @@ describe('Excel export', () => {
       .set('Cookie', cookie)
       .send({
         assignments: [
-          { slotIndex: 0, eventId: vaultId, groupId: groupAId, coachId },
-          { slotIndex: 1, eventId: vaultId, groupId: groupAId, coachId: null },
+          { slotIndex: 0, eventId: vaultId, classId: classAId, coachId },
+          { slotIndex: 1, eventId: vaultId, classId: classAId, coachId: null },
         ],
       })
       .expect(200)

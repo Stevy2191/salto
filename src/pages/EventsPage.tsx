@@ -109,7 +109,7 @@ export function EventForm({
             required
           />
         </Field>
-        <Field label="Capacity (groups at once)">
+        <Field label="Capacity (classes at once)">
           <TextInput
             type="number"
             min={1}
@@ -211,7 +211,7 @@ export function EventsPage() {
                     </span>
                   )}
                   <p className="text-sm text-slate-500">
-                    {event.capacity === 1 ? '1 group at a time' : `${event.capacity} groups at a time`}
+                    {event.capacity === 1 ? '1 class at a time' : `${event.capacity} classes at a time`}
                     {!event.active && ' · inactive'}
                   </p>
                 </div>

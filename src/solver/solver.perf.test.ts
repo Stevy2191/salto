@@ -4,7 +4,7 @@ import { hardConstraintViolations } from './validate.ts'
 import type { SolverInput } from './types.ts'
 
 // Spec: generation should feel instant (<2s) for realistic sizes —
-// ~10 groups, ~8 events, 12+ slots.
+// ~10 classes, ~8 events, 12+ slots.
 function realisticGym(): SolverInput {
   const events = [
     { id: 1, name: 'Vault', capacity: 1, active: true },
@@ -21,11 +21,11 @@ function realisticGym(): SolverInput {
     name: `Coach ${c + 1}`,
     specialties: events.filter((e) => e.id % 6 === c).map((e) => e.id),
   }))
-  // Each group rotates through 4 events (staggered so demand spreads),
+  // Each class rotates through 4 events (staggered so demand spreads),
   // 2 slots on two of them and 1 slot on the others → 6 slots of 12 used.
-  const groups = Array.from({ length: 10 }, (_, g) => ({
+  const classes = Array.from({ length: 10 }, (_, g) => ({
     id: g + 1,
-    name: `Group ${g + 1}`,
+    name: `Class ${g + 1}`,
     priority: g % 3,
     requiredEvents: [0, 2, 4, 6].map((offset, i) => ({
       eventId: ((g + offset) % 8) + 1,
@@ -35,11 +35,11 @@ function realisticGym(): SolverInput {
   }))
   return {
     events,
-    groups,
+    classes,
     coaches,
     slotCount: 12,
     rotationLength: 15,
-    coachMode: 'group',
+    coachMode: 'class',
     adjacencyPenalties: [{ beforeEventId: 7, afterEventId: 3 }],
     locked: [],
     seed: 7,
@@ -47,7 +47,7 @@ function realisticGym(): SolverInput {
 }
 
 describe('solver performance', () => {
-  it('solves a realistic gym (10 groups, 8 events, 12 slots) in under 2s', () => {
+  it('solves a realistic gym (10 classes, 8 events, 12 slots) in under 2s', () => {
     const input = realisticGym()
     const started = performance.now()
     const result = generateSchedule(input)

@@ -1,30 +1,30 @@
 # Salto — Project Spec
 
 Rotation scheduling for gymnastics gyms — auto-generate conflict-free
-practice schedules across events, groups, and coaches.
+practice schedules across events, classes, and coaches.
 
 ## Problem
 
 Gymnastics gyms typically build their practice rotation schedules by hand.
-Each practice session, multiple training groups must rotate through a set of
+Each practice session, multiple training classes must rotate through a set of
 events (vault, bars, beam, floor, tumble track, conditioning, etc.). Building
-the schedule manually is slow and error-prone: two groups end up on the same
-equipment, a coach gets double-booked, or a group misses an event it needed.
+the schedule manually is slow and error-prone: two classes end up on the same
+equipment, a coach gets double-booked, or a class misses an event it needed.
 
 Salto automates rotation schedule generation and gives coaches a clear,
 printable view of each session.
 
 **Salto is a general-purpose product, not a tool for one specific gym.**
 Nothing is hardcoded: every gym defines its own events/stations, equipment,
-groups, coaches, and constraints. Avoid baking in assumptions about which
-events exist, how many groups there are, or how sessions are structured —
+classes, coaches, and constraints. Avoid baking in assumptions about which
+events exist, how many classes there are, or how sessions are structured —
 everything flows from user configuration.
 
 ## Users
 
 - **Head coach / program director** (at any gym) — sets up their gym's
-  events, groups, coaches, and constraints; generates and adjusts schedules.
-- **Coaches** — view the schedule for their session; see where their group
+  events, classes, coaches, and constraints; generates and adjusts schedules.
+- **Coaches** — view the schedule for their session; see where their class
   goes next.
 
 Each installation serves one gym. Multi-gym hosting is out of scope for v1.
@@ -37,7 +37,7 @@ No parent/athlete-facing features in v1. Single admin login per instance
 ### Event (station)
 Fully user-defined — the examples below are illustrative, never a fixed list.
 - `name` (e.g., Vault, Uneven Bars, Beam, Floor, Tumble Track, Pit, Conditioning)
-- `capacity` — how many groups can use it simultaneously (usually 1; floor
+- `capacity` — how many classes can use it simultaneously (usually 1; floor
   might fit 2)
 - `active` — can be marked unavailable (equipment down)
 - `color` — hex color shown everywhere the event appears (grid, Excel
@@ -50,24 +50,26 @@ Fully user-defined — the examples below are illustrative, never a fixed list.
 - `specialties` — which events they can coach
 - `availability` — which sessions/days they work
 
-### Group
+### Class (training group)
+Called "group" in early versions — the UI and API now say "class"; SQLite
+storage keeps the original `groups` table name behind the server's mappers.
 - `name` (e.g., "Level 3 Girls", "Boys Team", "Xcel Silver")
-- `level` / priority — higher-priority groups get first pick when conflicts
+- `level` / priority — higher-priority classes get first pick when conflicts
   arise (e.g., optionals over recreational)
-- `requiredEvents` — the events this group must hit in a session, each with a
+- `requiredEvents` — the events this class must hit in a session, each with a
   **duration** (durations vary: e.g., 30 min beam, 20 min vault, 15 min
   conditioning)
-- `assignedCoaches` — coaches who travel with this group (some gyms rotate
+- `assignedCoaches` — coaches who travel with this class (some gyms rotate
   coaches by event instead; support both via a setting)
 
 ### Session (practice block)
 - `dayOfWeek`, `startTime`, `endTime`
-- `groups` — which groups attend
+- `classes` — which classes attend
 - `rotationLength` — base time slot granularity (e.g., 15 min increments);
   event durations are multiples of this
 
 ### Schedule (generated output)
-- For each time slot × event: which group is there, which coach is there
+- For each time slot × event: which class is there, which coach is there
 - Persisted so it can be reloaded, tweaked, and printed
 
 ## Scheduling Algorithm
@@ -75,31 +77,31 @@ Fully user-defined — the examples below are illustrative, never a fixed list.
 This is the heart of the app. Treat it as a constraint-satisfaction problem:
 
 **Hard constraints (never violated):**
-1. An event's simultaneous groups never exceed its capacity.
-2. A group is in exactly one place at a time.
+1. An event's simultaneous classes never exceed its capacity.
+2. A class is in exactly one place at a time.
 3. A coach is in exactly one place at a time.
-4. Each group completes all of its required events with their full durations
+4. Each class completes all of its required events with their full durations
    within the session window.
 5. Inactive events are never scheduled.
 
 **Soft constraints (optimize, in priority order):**
-1. Higher-priority groups get their preferred/required layout first.
-2. Minimize idle slots ("dead time") for every group.
-3. Avoid back-to-back high-intensity events for the same group (e.g., don't
+1. Higher-priority classes get their preferred/required layout first.
+2. Minimize idle slots ("dead time") for every class.
+3. Avoid back-to-back high-intensity events for the same class (e.g., don't
    put conditioning immediately before beam) — make this a configurable
    adjacency-penalty list.
-4. Coaches stay with their assigned group (or event, depending on gym mode).
+4. Coaches stay with their assigned class (or event, depending on gym mode).
 
 **Suggested approach:**
 - Discretize the session into slots of `rotationLength` minutes.
-- Start with a greedy assignment ordered by group priority, backtracking when
-  a group can't be placed.
+- Start with a greedy assignment ordered by class priority, backtracking when
+  a class can't be placed.
 - If greedy + backtracking proves insufficient, upgrade to a proper CSP
   solver. Keep the solver a pure, well-tested module with no UI dependencies
   so it can be swapped/upgraded independently.
 - If no valid schedule exists, report *why* (e.g., "Level 3 needs 90 min of
   events but the session is 75 min") rather than failing silently.
-- Generation should feel instant (<2s) for realistic sizes: ~10 groups, ~8
+- Generation should feel instant (<2s) for realistic sizes: ~10 classes, ~8
   events, ~12 slots.
 
 **Test the solver hard.** Property-based tests: no double-bookings, all
@@ -113,10 +115,10 @@ session.
 > Remaining ideas live under "Later / nice-to-have".
 
 ### Phase 1 — Setup & manual grid (walking skeleton)
-- CRUD for events, coaches, groups, sessions
+- CRUD for events, coaches, classes, sessions
 - **First-run experience:** a new gym sees an empty database. Provide a
   guided setup **wizard** that carries the user through the steps in order
-  (add events → groups → coaches → first session) with Next/Back
+  (add events → classes → coaches → first session) with Next/Back
   navigation and a visible progress indicator (step names + "Step N of 4").
   Steps aren't blocked on perfection — Next unlocks once the step has at
   least one item. Finishing lands on the newly created session's schedule
@@ -128,7 +130,7 @@ session.
   users can explore before entering their own. Sample data must be
   one-click removable.
 - A schedule grid (rows = events, columns = time slots; toggleable to
-  rows = groups) where a schedule can be built/edited **manually** via
+  rows = classes) where a schedule can be built/edited **manually** via
   drag-and-drop or click-to-assign
 - Conflict highlighting in the manual editor (red cell when double-booked)
 - Data persistence
@@ -149,14 +151,14 @@ model before the solver is built.
 - Mark a coach absent or an event down → regenerate around locked/kept
   assignments with minimal disruption (prefer schedules close to the original)
 - Print view: clean, black-and-white-friendly, one page per session; big
-  enough to read from across a gym. Also a per-group "where do I go next"
+  enough to read from across a gym. Also a per-class "where do I go next"
   strip. Uses the event colors, with a black-and-white-friendly fallback
   (color plus a pattern or the event name always present in text), since
   many gyms print in B&W.
 - Excel export (shipped early, with the manual grid): download a session's
   schedule as .xlsx mirroring the on-screen layout — events as columns,
   time slots as rows, each occupied cell solid-filled with its event's
-  color, group and coach names in the cell, and white/black text chosen
+  color, class and coach names in the cell, and white/black text chosen
   automatically from the fill's brightness so it stays readable when
   printed from Excel.
 - Copy a previous session's schedule as a starting point
@@ -242,10 +244,10 @@ simple and single-gym:
 ## UX Notes
 
 - The schedule grid is the product. Invest there: readable at a glance,
-  color-coded by group, dense but not cramped.
+  color-coded by event, dense but not cramped.
 - Coaches use this poolside-style — chalky hands, phone or a printout.
   Big touch targets, works on a phone screen, prints cleanly.
-- Terminology should match gym vocabulary: "rotation," "event," "station,"
+- Terminology should match gym vocabulary: "rotation," "event," "station," "class,"
   "session" — never "resource allocation" or "task."
 
 ## Non-Goals for v1

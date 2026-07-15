@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import type { DatabaseSync } from 'node:sqlite'
-import type { Coach, Group, GymEvent, RequiredEvent, Session } from '../../shared/types.ts'
+import type { Coach, GymClass, GymEvent, RequiredEvent, Session } from '../../shared/types.ts'
 import { formatTime, parseTime } from '../../shared/slots.ts'
 import { isHexColor, nextPaletteColor } from '../../shared/colors.ts'
 import {
@@ -14,6 +14,12 @@ import {
   reqString,
 } from '../validate.ts'
 import { withTransaction } from '../tx.ts'
+
+// Storage note: classes were called "groups" before the rename, and SQLite
+// keeps the original names (`groups` table, `sessions.groups` column,
+// `assignments.group_id`) so deployed databases never needed a risky rename
+// migration. These mappers are the translation boundary — nothing above
+// them says "group".
 
 interface EventRow {
   id: number
@@ -32,7 +38,7 @@ interface CoachRow {
   is_sample: number
 }
 
-interface GroupRow {
+interface ClassRow {
   id: number
   name: string
   priority: number
@@ -71,7 +77,7 @@ const toCoach = (r: CoachRow): Coach => ({
   isSample: r.is_sample === 1,
 })
 
-const toGroup = (r: GroupRow): Group => ({
+const toClass = (r: ClassRow): GymClass => ({
   id: r.id,
   name: r.name,
   priority: r.priority,
@@ -87,7 +93,7 @@ const toSession = (r: SessionRow): Session => ({
   startTime: r.start_time,
   endTime: r.end_time,
   rotationLength: r.rotation_length,
-  groups: JSON.parse(r.groups) as number[],
+  classes: JSON.parse(r.groups) as number[],
   absentCoaches: JSON.parse(r.absent_coaches) as number[],
   unavailableEvents: JSON.parse(r.unavailable_events) as number[],
   isSample: r.is_sample === 1,
@@ -134,7 +140,7 @@ function parseCoach(body: unknown): { name: string; specialties: number[]; avail
   }
 }
 
-function parseGroup(body: unknown): {
+function parseClass(body: unknown): {
   name: string
   priority: number
   requiredEvents: RequiredEvent[]
@@ -168,7 +174,7 @@ function parseSession(body: unknown): {
   startTime: string
   endTime: string
   rotationLength: number
-  groups: number[]
+  classes: number[]
 } {
   const obj = asObject(body)
   const startTime = reqString(obj.startTime, 'startTime', 5)
@@ -189,7 +195,7 @@ function parseSession(body: unknown): {
     startTime,
     endTime,
     rotationLength,
-    groups: intArray(obj.groups, 'groups'),
+    classes: intArray(obj.classes, 'classes'),
   }
 }
 
@@ -262,16 +268,16 @@ export function entityRoutes(db: DatabaseSync): Router {
       db.prepare('DELETE FROM events WHERE id = ?').run(id)
       scrubIdFromJsonColumn(db, 'coaches', 'specialties', id)
       // requiredEvents entries are objects, handled separately below.
-      const groups = db.prepare('SELECT id, required_events AS col FROM groups').all() as {
+      const classes = db.prepare('SELECT id, required_events AS col FROM groups').all() as {
         id: number
         col: string
       }[]
-      for (const g of groups) {
-        const entries = JSON.parse(g.col) as RequiredEvent[]
+      for (const c of classes) {
+        const entries = JSON.parse(c.col) as RequiredEvent[]
         if (entries.some((r) => r.eventId === id)) {
           db.prepare('UPDATE groups SET required_events = ? WHERE id = ?').run(
             JSON.stringify(entries.filter((r) => r.eventId !== id)),
-            g.id,
+            c.id,
           )
         }
       }
@@ -318,35 +324,35 @@ export function entityRoutes(db: DatabaseSync): Router {
     res.status(204).end()
   })
 
-  // --- Groups ---
-  router.get('/groups', (_req, res) => {
-    const rows = db.prepare('SELECT * FROM groups ORDER BY id').all() as unknown as GroupRow[]
-    res.json({ groups: rows.map(toGroup) })
+  // --- Classes ---
+  router.get('/classes', (_req, res) => {
+    const rows = db.prepare('SELECT * FROM groups ORDER BY id').all() as unknown as ClassRow[]
+    res.json({ classes: rows.map(toClass) })
   })
 
-  router.post('/groups', (req, res) => {
-    const g = parseGroup(req.body)
+  router.post('/classes', (req, res) => {
+    const c = parseClass(req.body)
     const result = db
       .prepare('INSERT INTO groups (name, priority, required_events, assigned_coaches) VALUES (?, ?, ?, ?)')
-      .run(g.name, g.priority, JSON.stringify(g.requiredEvents), JSON.stringify(g.assignedCoaches))
-    const row = db.prepare('SELECT * FROM groups WHERE id = ?').get(result.lastInsertRowid) as unknown as GroupRow
-    res.status(201).json({ group: toGroup(row) })
+      .run(c.name, c.priority, JSON.stringify(c.requiredEvents), JSON.stringify(c.assignedCoaches))
+    const row = db.prepare('SELECT * FROM groups WHERE id = ?').get(result.lastInsertRowid) as unknown as ClassRow
+    res.status(201).json({ class: toClass(row) })
   })
 
-  router.put('/groups/:id', (req, res) => {
+  router.put('/classes/:id', (req, res) => {
     const id = idParam(req.params.id)
-    const g = parseGroup(req.body)
-    requireRow(db.prepare('SELECT id FROM groups WHERE id = ?').get(id), 'group')
+    const c = parseClass(req.body)
+    requireRow(db.prepare('SELECT id FROM groups WHERE id = ?').get(id), 'class')
     db.prepare(
       'UPDATE groups SET name = ?, priority = ?, required_events = ?, assigned_coaches = ? WHERE id = ?',
-    ).run(g.name, g.priority, JSON.stringify(g.requiredEvents), JSON.stringify(g.assignedCoaches), id)
-    const row = db.prepare('SELECT * FROM groups WHERE id = ?').get(id) as unknown as GroupRow
-    res.json({ group: toGroup(row) })
+    ).run(c.name, c.priority, JSON.stringify(c.requiredEvents), JSON.stringify(c.assignedCoaches), id)
+    const row = db.prepare('SELECT * FROM groups WHERE id = ?').get(id) as unknown as ClassRow
+    res.json({ class: toClass(row) })
   })
 
-  router.delete('/groups/:id', (req, res) => {
+  router.delete('/classes/:id', (req, res) => {
     const id = idParam(req.params.id)
-    requireRow(db.prepare('SELECT id FROM groups WHERE id = ?').get(id), 'group')
+    requireRow(db.prepare('SELECT id FROM groups WHERE id = ?').get(id), 'class')
     withTransaction(db, () => {
       db.prepare('DELETE FROM groups WHERE id = ?').run(id)
       scrubIdFromJsonColumn(db, 'sessions', 'groups', id)
@@ -373,7 +379,7 @@ export function entityRoutes(db: DatabaseSync): Router {
       .prepare(
         'INSERT INTO sessions (name, day_of_week, start_time, end_time, rotation_length, groups) VALUES (?, ?, ?, ?, ?, ?)',
       )
-      .run(s.name, s.dayOfWeek, s.startTime, s.endTime, s.rotationLength, JSON.stringify(s.groups))
+      .run(s.name, s.dayOfWeek, s.startTime, s.endTime, s.rotationLength, JSON.stringify(s.classes))
     const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(result.lastInsertRowid) as unknown as SessionRow
     res.status(201).json({ session: toSession(row) })
   })
@@ -384,7 +390,7 @@ export function entityRoutes(db: DatabaseSync): Router {
     requireRow(db.prepare('SELECT id FROM sessions WHERE id = ?').get(id), 'session')
     db.prepare(
       'UPDATE sessions SET name = ?, day_of_week = ?, start_time = ?, end_time = ?, rotation_length = ?, groups = ? WHERE id = ?',
-    ).run(s.name, s.dayOfWeek, s.startTime, s.endTime, s.rotationLength, JSON.stringify(s.groups), id)
+    ).run(s.name, s.dayOfWeek, s.startTime, s.endTime, s.rotationLength, JSON.stringify(s.classes), id)
     const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as unknown as SessionRow
     res.json({ session: toSession(row) })
   })
@@ -413,7 +419,7 @@ export function entityRoutes(db: DatabaseSync): Router {
     res.json({ session: toSession(row) })
   })
 
-  // Copy a session as a starting point: same duration, rotation, groups,
+  // Copy a session as a starting point: same duration, rotation, classes,
   // and full schedule (assignments arrive unlocked); outages don't copy.
   router.post('/sessions/:id/copy', (req, res) => {
     const id = idParam(req.params.id)

@@ -6,7 +6,7 @@ import { Layout } from './components/Layout.tsx'
 import { Dashboard } from './pages/Dashboard.tsx'
 import { EventsPage } from './pages/EventsPage.tsx'
 import { CoachesPage } from './pages/CoachesPage.tsx'
-import { GroupsPage } from './pages/GroupsPage.tsx'
+import { ClassesPage } from './pages/ClassesPage.tsx'
 import { SessionsPage } from './pages/SessionsPage.tsx'
 import { SchedulePage } from './pages/SchedulePage.tsx'
 import { SetupWizard } from './pages/SetupWizard.tsx'
@@ -30,7 +30,7 @@ function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/events" element={<EventsPage />} />
             <Route path="/coaches" element={<CoachesPage />} />
-            <Route path="/groups" element={<GroupsPage />} />
+            <Route path="/classes" element={<ClassesPage />} />
             <Route path="/sessions" element={<SessionsPage />} />
             <Route path="/sessions/:id/schedule" element={<KeyedSchedulePage />} />
             <Route path="/sessions/:id/print" element={<PrintPage />} />

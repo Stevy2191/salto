@@ -12,7 +12,7 @@ const arbInput: fc.Arbitrary<SolverInput> = fc
     eventCount: fc.integer({ min: 1, max: 6 }),
     capacities: fc.array(fc.integer({ min: 1, max: 2 }), { minLength: 6, maxLength: 6 }),
     inactiveMask: fc.array(fc.boolean(), { minLength: 6, maxLength: 6 }),
-    groupCount: fc.integer({ min: 1, max: 8 }),
+    classCount: fc.integer({ min: 1, max: 8 }),
     requirements: fc.array(
       fc.array(
         fc.record({
@@ -27,7 +27,7 @@ const arbInput: fc.Arbitrary<SolverInput> = fc
     coachCount: fc.integer({ min: 0, max: 4 }),
     slotCount: fc.integer({ min: 3, max: 14 }),
     rotationLength: fc.constantFrom(5, 10, 15, 30),
-    coachMode: fc.constantFrom('group' as const, 'event' as const),
+    coachMode: fc.constantFrom('class' as const, 'event' as const),
     seed: fc.integer({ min: 0, max: 2 ** 31 - 1 }),
   })
   .map((raw) => {
@@ -38,7 +38,7 @@ const arbInput: fc.Arbitrary<SolverInput> = fc
       // Keep at least one active event so setups aren't degenerate.
       active: i === 0 ? true : !raw.inactiveMask[i],
     }))
-    const groups = Array.from({ length: raw.groupCount }, (_, g) => {
+    const classes = Array.from({ length: raw.classCount }, (_, g) => {
       const seen = new Set<number>()
       const requiredEvents = raw.requirements[g]!
         .map((r) => ({
@@ -48,7 +48,7 @@ const arbInput: fc.Arbitrary<SolverInput> = fc
         .filter((r) => (seen.has(r.eventId) ? false : (seen.add(r.eventId), true)))
       return {
         id: g + 1,
-        name: `Group ${g + 1}`,
+        name: `Class ${g + 1}`,
         priority: raw.priorities[g]!,
         requiredEvents,
         assignedCoaches: raw.coachCount > 0 ? [(g % raw.coachCount) + 1] : [],
@@ -61,7 +61,7 @@ const arbInput: fc.Arbitrary<SolverInput> = fc
     }))
     return {
       events,
-      groups,
+      classes,
       coaches,
       slotCount: raw.slotCount,
       rotationLength: raw.rotationLength,

@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
-import type { Coach, Group, GymEvent, Session } from '../../shared/types.ts'
+import type { Coach, GymClass, GymEvent, Session } from '../../shared/types.ts'
 import { apiDelete, apiGet, apiPost } from '../lib/api.ts'
 import { useLoad } from '../lib/useLoad.ts'
 import { Button, Card, ErrorNote } from '../components/ui.tsx'
 import { EventForm } from './EventsPage.tsx'
-import { GroupForm } from './GroupsPage.tsx'
+import { ClassForm } from './ClassesPage.tsx'
 import { CoachForm } from './CoachesPage.tsx'
 import { SessionForm, sessionLabel } from './SessionsPage.tsx'
 
@@ -19,10 +19,10 @@ export const SETUP_STEPS = [
     detail: 'Vault, bars, beam, floor — whatever stations your gym has.',
   },
   {
-    slug: 'groups',
-    short: 'Groups',
-    title: 'Add your groups',
-    detail: 'Each training group, its priority, and which events it needs.',
+    slug: 'classes',
+    short: 'Classes',
+    title: 'Add your classes',
+    detail: 'Each class, its priority, and which events it needs.',
   },
   {
     slug: 'coaches',
@@ -34,7 +34,7 @@ export const SETUP_STEPS = [
     slug: 'session',
     short: 'First session',
     title: 'Create your first session',
-    detail: 'A practice block with its time window and attending groups.',
+    detail: 'A practice block with its time window and attending classes.',
   },
 ] as const
 
@@ -75,7 +75,7 @@ export function SetupWizard() {
   const stepIndex = SETUP_STEPS.findIndex((s) => s.slug === params.step)
 
   const eventsLoad = useLoad(() => apiGet<{ events: GymEvent[] }>('/api/events'))
-  const groupsLoad = useLoad(() => apiGet<{ groups: Group[] }>('/api/groups'))
+  const classesLoad = useLoad(() => apiGet<{ classes: GymClass[] }>('/api/classes'))
   const coachesLoad = useLoad(() => apiGet<{ coaches: Coach[] }>('/api/coaches'))
   const sessionsLoad = useLoad(() => apiGet<{ sessions: Session[] }>('/api/sessions'))
   const [createdSessionId, setCreatedSessionId] = useState<number | null>(null)
@@ -84,19 +84,19 @@ export function SetupWizard() {
   if (stepIndex === -1) return <Navigate to={`/guide/${SETUP_STEPS[0].slug}`} replace />
 
   const loading =
-    eventsLoad.loading || groupsLoad.loading || coachesLoad.loading || sessionsLoad.loading
+    eventsLoad.loading || classesLoad.loading || coachesLoad.loading || sessionsLoad.loading
   const loadError =
-    eventsLoad.error ?? groupsLoad.error ?? coachesLoad.error ?? sessionsLoad.error
+    eventsLoad.error ?? classesLoad.error ?? coachesLoad.error ?? sessionsLoad.error
   if (loadError) return <ErrorNote message={loadError} />
   if (loading) return null
 
   const events = eventsLoad.data?.events ?? []
-  const groups = groupsLoad.data?.groups ?? []
+  const classes = classesLoad.data?.classes ?? []
   const coaches = coachesLoad.data?.coaches ?? []
   const sessions = sessionsLoad.data?.sessions ?? []
   const stepDone = [
     events.length > 0,
-    groups.length > 0,
+    classes.length > 0,
     coaches.length > 0,
     sessions.length > 0,
   ]
@@ -126,7 +126,7 @@ export function SetupWizard() {
         return (
           <>
             <p className="text-sm text-slate-600">
-              Events are the stations groups rotate through. Most gyms have several — add as
+              Events are the stations classes rotate through. Most gyms have several — add as
               many as you like; one is enough to move on.
             </p>
             <EventForm
@@ -142,25 +142,25 @@ export function SetupWizard() {
             />
           </>
         )
-      case 'groups':
+      case 'classes':
         return (
           <>
             <p className="text-sm text-slate-600">
-              Groups are who trains — "Level 3 Girls", "Boys Team". Set what each group needs
+              Classes are who trains — "Level 3 Girls", "Boys Team". Set what each class needs
               in a session; you can refine durations later.
             </p>
-            <GroupForm
+            <ClassForm
               initial={{ name: '', priority: 0, requiredEvents: [], assignedCoaches: [] }}
               events={events}
               coaches={coaches}
               onSave={async (values) => {
-                await apiPost('/api/groups', values)
-                await groupsLoad.reload()
+                await apiPost('/api/classes', values)
+                await classesLoad.reload()
               }}
             />
             <ItemList
-              items={groups.map((g) => ({ id: g.id, label: g.name }))}
-              onDelete={(id) => void removeItem(`/api/groups/${id}`, groupsLoad.reload)}
+              items={classes.map((c) => ({ id: c.id, label: c.name }))}
+              onDelete={(id) => void removeItem(`/api/classes/${id}`, classesLoad.reload)}
             />
           </>
         )
@@ -169,7 +169,7 @@ export function SetupWizard() {
           <>
             <p className="text-sm text-slate-600">
               Add your coaches, what they coach, and the days they work. You can assign them to
-              groups now or later.
+              classes now or later.
             </p>
             <CoachForm
               initial={{ name: '', specialties: [], availability: [] }}
@@ -189,7 +189,7 @@ export function SetupWizard() {
         return (
           <>
             <p className="text-sm text-slate-600">
-              A session is one practice block. Your groups are pre-selected — save it and
+              A session is one practice block. Your classes are pre-selected — save it and
               you're done.
             </p>
             <SessionForm
@@ -199,9 +199,9 @@ export function SetupWizard() {
                 startTime: '16:00',
                 endTime: '18:00',
                 rotationLength: 15,
-                groups: groups.map((g) => g.id),
+                classes: classes.map((c) => c.id),
               }}
-              groups={groups}
+              classes={classes}
               onSave={async (values) => {
                 const res = await apiPost<{ session: Session }>('/api/sessions', values)
                 setCreatedSessionId(res.session.id)

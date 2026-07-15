@@ -1,4 +1,4 @@
-// Deterministic per-group chip colors so the grid reads at a glance.
+// Deterministic per-class chip colors so the grid reads at a glance.
 // Full literal class strings so Tailwind's scanner picks them up.
 
 const PALETTE = [
@@ -14,6 +14,6 @@ const PALETTE = [
   'bg-orange-100 text-orange-900 ring-orange-300',
 ] as const
 
-export function groupColor(groupId: number): string {
-  return PALETTE[groupId % PALETTE.length]!
+export function classColor(classId: number): string {
+  return PALETTE[classId % PALETTE.length]!
 }

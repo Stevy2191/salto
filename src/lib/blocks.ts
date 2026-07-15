@@ -1,6 +1,6 @@
-// Pure block computation for a group's timeline: consecutive slots on the
+// Pure block computation for a class's timeline: consecutive slots on the
 // same event with the same coach form one block. Used by the print view
-// and the per-group strips. No UI imports.
+// and the per-class strips. No UI imports.
 import type { Assignment } from '../../shared/types.ts'
 
 export interface ScheduleBlock {
@@ -10,14 +10,14 @@ export interface ScheduleBlock {
   coachId: number | null
 }
 
-export function groupBlocks(
+export function classBlocks(
   assignments: Assignment[],
-  groupId: number,
+  classId: number,
   slotCount: number,
 ): ScheduleBlock[] {
   const bySlot = new Map<number, Assignment>()
   for (const a of assignments) {
-    if (a.groupId === groupId) bySlot.set(a.slotIndex, a)
+    if (a.classId === classId) bySlot.set(a.slotIndex, a)
   }
   const blocks: ScheduleBlock[] = []
   let current: ScheduleBlock | null = null

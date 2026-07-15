@@ -27,7 +27,9 @@ function getSettings(db: DatabaseSync): Settings {
     }
   }
   return {
-    coachMode: getValue(db, 'coach_mode') === 'event' ? 'event' : 'group',
+    // Anything but 'event' means class mode — including the legacy stored
+    // value 'group' from before the groups → classes rename.
+    coachMode: getValue(db, 'coach_mode') === 'event' ? 'event' : 'class',
     adjacencyPenalties,
   }
 }
@@ -55,8 +57,8 @@ export function settingsRoutes(db: DatabaseSync): Router {
   router.put('/settings', (req, res) => {
     const obj = asObject(req.body)
     if (obj.coachMode !== undefined) {
-      if (obj.coachMode !== 'group' && obj.coachMode !== 'event') {
-        throw new ApiError(400, "coachMode must be 'group' or 'event'")
+      if (obj.coachMode !== 'class' && obj.coachMode !== 'event') {
+        throw new ApiError(400, "coachMode must be 'class' or 'event'")
       }
       setValue(db, 'coach_mode', obj.coachMode)
     }

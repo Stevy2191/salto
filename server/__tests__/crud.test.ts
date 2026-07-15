@@ -13,7 +13,7 @@ beforeEach(async () => {
 describe('auth gating', () => {
   it('rejects CRUD requests without a session', async () => {
     await request(app).get('/api/events').expect(401)
-    await request(app).post('/api/groups').send({ name: 'X' }).expect(401)
+    await request(app).post('/api/classes').send({ name: 'X' }).expect(401)
   })
 })
 
@@ -105,7 +105,7 @@ describe('events CRUD', () => {
       .expect(404)
   })
 
-  it('deleting an event scrubs it from coach specialties and group requirements', async () => {
+  it('deleting an event scrubs it from coach specialties and class requirements', async () => {
     const event = (
       await request(app).post('/api/events').set('Cookie', cookie).send({ name: 'Beam' })
     ).body.event
@@ -115,19 +115,19 @@ describe('events CRUD', () => {
         .set('Cookie', cookie)
         .send({ name: 'Riley Cho', specialties: [event.id] })
     ).body.coach
-    const group = (
+    const cls = (
       await request(app)
-        .post('/api/groups')
+        .post('/api/classes')
         .set('Cookie', cookie)
         .send({ name: 'Level 3', requiredEvents: [{ eventId: event.id, duration: 30 }] })
-    ).body.group
+    ).body.class
 
     await request(app).delete(`/api/events/${event.id}`).set('Cookie', cookie).expect(204)
 
     const coaches = await request(app).get('/api/coaches').set('Cookie', cookie)
     expect(coaches.body.coaches.find((c: { id: number }) => c.id === coach.id).specialties).toEqual([])
-    const groups = await request(app).get('/api/groups').set('Cookie', cookie)
-    expect(groups.body.groups.find((g: { id: number }) => g.id === group.id).requiredEvents).toEqual([])
+    const classes = await request(app).get('/api/classes').set('Cookie', cookie)
+    expect(classes.body.classes.find((c: { id: number }) => c.id === cls.id).requiredEvents).toEqual([])
   })
 })
 
@@ -153,27 +153,27 @@ describe('coaches CRUD', () => {
       .expect(400)
   })
 
-  it('deleting a coach scrubs group assignments', async () => {
+  it('deleting a coach scrubs class assignments', async () => {
     const coach = (
       await request(app).post('/api/coaches').set('Cookie', cookie).send({ name: 'Sam Ortiz' })
     ).body.coach
-    const group = (
+    const cls = (
       await request(app)
-        .post('/api/groups')
+        .post('/api/classes')
         .set('Cookie', cookie)
         .send({ name: 'Boys Team', assignedCoaches: [coach.id] })
-    ).body.group
+    ).body.class
 
     await request(app).delete(`/api/coaches/${coach.id}`).set('Cookie', cookie).expect(204)
-    const groups = await request(app).get('/api/groups').set('Cookie', cookie)
-    expect(groups.body.groups.find((g: { id: number }) => g.id === group.id).assignedCoaches).toEqual([])
+    const classes = await request(app).get('/api/classes').set('Cookie', cookie)
+    expect(classes.body.classes.find((c: { id: number }) => c.id === cls.id).assignedCoaches).toEqual([])
   })
 })
 
-describe('groups CRUD', () => {
+describe('classes CRUD', () => {
   it('stores required events with durations', async () => {
     const created = await request(app)
-      .post('/api/groups')
+      .post('/api/classes')
       .set('Cookie', cookie)
       .send({
         name: 'Xcel Silver',
@@ -184,13 +184,13 @@ describe('groups CRUD', () => {
         ],
       })
       .expect(201)
-    expect(created.body.group.requiredEvents).toHaveLength(2)
-    expect(created.body.group.priority).toBe(2)
+    expect(created.body.class.requiredEvents).toHaveLength(2)
+    expect(created.body.class.priority).toBe(2)
   })
 
   it('rejects malformed required events', async () => {
     await request(app)
-      .post('/api/groups')
+      .post('/api/classes')
       .set('Cookie', cookie)
       .send({ name: 'X', requiredEvents: [{ eventId: 1 }] })
       .expect(400)
@@ -198,26 +198,26 @@ describe('groups CRUD', () => {
 
   it('rejects required-event durations that are not multiples of 5', async () => {
     await request(app)
-      .post('/api/groups')
+      .post('/api/classes')
       .set('Cookie', cookie)
       .send({ name: 'X', requiredEvents: [{ eventId: 1, duration: 22 }] })
       .expect(400)
   })
 
-  it('deleting a group scrubs sessions', async () => {
-    const group = (
-      await request(app).post('/api/groups').set('Cookie', cookie).send({ name: 'L3' })
-    ).body.group
+  it('deleting a class scrubs sessions', async () => {
+    const cls = (
+      await request(app).post('/api/classes').set('Cookie', cookie).send({ name: 'L3' })
+    ).body.class
     const session = (
       await request(app)
         .post('/api/sessions')
         .set('Cookie', cookie)
-        .send({ dayOfWeek: 1, startTime: '16:00', endTime: '18:00', groups: [group.id] })
+        .send({ dayOfWeek: 1, startTime: '16:00', endTime: '18:00', classes: [cls.id] })
     ).body.session
 
-    await request(app).delete(`/api/groups/${group.id}`).set('Cookie', cookie).expect(204)
+    await request(app).delete(`/api/classes/${cls.id}`).set('Cookie', cookie).expect(204)
     const sessions = await request(app).get('/api/sessions').set('Cookie', cookie)
-    expect(sessions.body.sessions.find((s: { id: number }) => s.id === session.id).groups).toEqual([])
+    expect(sessions.body.sessions.find((s: { id: number }) => s.id === session.id).classes).toEqual([])
   })
 })
 
@@ -233,7 +233,7 @@ describe('sessions CRUD', () => {
       startTime: '16:00',
       endTime: '18:30',
       rotationLength: 15,
-      groups: [],
+      classes: [],
     })
   })
 
@@ -283,13 +283,13 @@ describe('sessions CRUD', () => {
     expect(after.body.session.unavailableEvents).toEqual([1, 2])
   })
 
-  it('copies a session with schedule, groups, and duration', async () => {
+  it('copies a session with schedule, classes, and duration', async () => {
     const eventId = (
       await request(app).post('/api/events').set('Cookie', cookie).send({ name: 'Vault' })
     ).body.event.id
-    const groupId = (
-      await request(app).post('/api/groups').set('Cookie', cookie).send({ name: 'L3' })
-    ).body.group.id
+    const classId = (
+      await request(app).post('/api/classes').set('Cookie', cookie).send({ name: 'L3' })
+    ).body.class.id
     const source = (
       await request(app)
         .post('/api/sessions')
@@ -300,13 +300,13 @@ describe('sessions CRUD', () => {
           startTime: '16:00',
           endTime: '18:30',
           rotationLength: 30,
-          groups: [groupId],
+          classes: [classId],
         })
     ).body.session
     await request(app)
       .put(`/api/sessions/${source.id}/assignments`)
       .set('Cookie', cookie)
-      .send({ assignments: [{ slotIndex: 0, eventId, groupId, coachId: null, locked: true }] })
+      .send({ assignments: [{ slotIndex: 0, eventId, classId, coachId: null, locked: true }] })
       .expect(200)
     await request(app)
       .put(`/api/sessions/${source.id}/outages`)
@@ -321,14 +321,14 @@ describe('sessions CRUD', () => {
         .send({ name: 'Thursday', dayOfWeek: 4, startTime: '17:00' })
         .expect(201)
     ).body.session
-    // Same duration and rotation, chosen day/time, same groups, no outages.
+    // Same duration and rotation, chosen day/time, same classes, no outages.
     expect(copy).toMatchObject({
       name: 'Thursday',
       dayOfWeek: 4,
       startTime: '17:00',
       endTime: '19:30',
       rotationLength: 30,
-      groups: [groupId],
+      classes: [classId],
       absentCoaches: [],
       unavailableEvents: [],
     })
@@ -337,7 +337,7 @@ describe('sessions CRUD', () => {
       await request(app).get(`/api/sessions/${copy.id}/assignments`).set('Cookie', cookie)
     ).body.assignments
     expect(assignments).toEqual([
-      { slotIndex: 0, eventId, groupId, coachId: null, locked: false },
+      { slotIndex: 0, eventId, classId, coachId: null, locked: false },
     ])
   })
 
@@ -370,9 +370,9 @@ describe('sessions CRUD', () => {
 })
 
 describe('settings', () => {
-  it('defaults to group mode and persists changes', async () => {
+  it('defaults to class mode and persists changes', async () => {
     const initial = await request(app).get('/api/settings').set('Cookie', cookie)
-    expect(initial.body.settings.coachMode).toBe('group')
+    expect(initial.body.settings.coachMode).toBe('class')
 
     await request(app)
       .put('/api/settings')
@@ -407,7 +407,7 @@ describe('settings', () => {
       { beforeEventId: 3, afterEventId: 1 },
     ])
     // Updating one setting leaves the other untouched.
-    expect(after.body.settings.coachMode).toBe('group')
+    expect(after.body.settings.coachMode).toBe('class')
   })
 
   it('rejects malformed adjacency penalties', async () => {

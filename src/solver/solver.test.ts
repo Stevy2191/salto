@@ -6,11 +6,11 @@ import type { SolverInput } from './types.ts'
 function makeInput(overrides: Partial<SolverInput>): SolverInput {
   return {
     events: [],
-    groups: [],
+    classes: [],
     coaches: [],
     slotCount: 8,
     rotationLength: 15,
-    coachMode: 'group',
+    coachMode: 'class',
     adjacencyPenalties: [],
     locked: [],
     seed: 1,
@@ -25,7 +25,7 @@ const event = (id: number, name: string, capacity = 1, active = true) => ({
   active,
 })
 
-const group = (
+const cls = (
   id: number,
   name: string,
   requiredEvents: { eventId: number; duration: number }[],
@@ -50,20 +50,20 @@ function expectFail(input: SolverInput) {
 }
 
 describe('trivial session', () => {
-  it('schedules one group on one event', () => {
+  it('schedules one class on one event', () => {
     const input = makeInput({
       events: [event(1, 'Vault')],
-      groups: [group(1, 'Level 3', [{ eventId: 1, duration: 30 }])],
+      classes: [cls(1, 'Level 3', [{ eventId: 1, duration: 30 }])],
     })
     const result = expectOk(input)
     expect(result.assignments).toHaveLength(2)
-    expect(result.assignments.every((a) => a.eventId === 1 && a.groupId === 1)).toBe(true)
+    expect(result.assignments.every((a) => a.eventId === 1 && a.classId === 1)).toBe(true)
   })
 
-  it('handles a group with no requirements', () => {
+  it('handles a class with no requirements', () => {
     const input = makeInput({
       events: [event(1, 'Vault')],
-      groups: [group(1, 'Level 3', [])],
+      classes: [cls(1, 'Level 3', [])],
     })
     expect(expectOk(input).assignments).toHaveLength(0)
   })
@@ -71,17 +71,17 @@ describe('trivial session', () => {
 
 describe('exactly-tight session', () => {
   it('fills a perfect swap with no idle slots', () => {
-    // Two groups, two capacity-1 events, 4 slots; each group needs each
+    // Two classes, two capacity-1 events, 4 slots; each class needs each
     // event for 2 slots. Only solution: swap halves. Zero idle.
     const input = makeInput({
       slotCount: 4,
       events: [event(1, 'Vault'), event(2, 'Beam')],
-      groups: [
-        group(1, 'Level 3', [
+      classes: [
+        cls(1, 'Level 3', [
           { eventId: 1, duration: 30 },
           { eventId: 2, duration: 30 },
         ]),
-        group(2, 'Level 5', [
+        cls(2, 'Level 5', [
           { eventId: 1, duration: 30 },
           { eventId: 2, duration: 30 },
         ]),
@@ -89,9 +89,9 @@ describe('exactly-tight session', () => {
     })
     const result = expectOk(input)
     expect(result.assignments).toHaveLength(8)
-    for (const groupId of [1, 2]) {
+    for (const classId of [1, 2]) {
       const busySlots = new Set(
-        result.assignments.filter((a) => a.groupId === groupId).map((a) => a.slotIndex),
+        result.assignments.filter((a) => a.classId === classId).map((a) => a.slotIndex),
       )
       expect(busySlots.size).toBe(4) // no idle slots
     }
@@ -99,12 +99,12 @@ describe('exactly-tight session', () => {
 })
 
 describe('impossible sessions explain themselves', () => {
-  it('group needs more time than the session has', () => {
+  it('class needs more time than the session has', () => {
     const input = makeInput({
       slotCount: 5, // 75 min
       events: [event(1, 'Vault'), event(2, 'Beam'), event(3, 'Floor')],
-      groups: [
-        group(1, 'Level 3 Girls', [
+      classes: [
+        cls(1, 'Level 3 Girls', [
           { eventId: 1, duration: 30 },
           { eventId: 2, duration: 30 },
           { eventId: 3, duration: 30 },
@@ -121,21 +121,21 @@ describe('impossible sessions explain themselves', () => {
     const input = makeInput({
       slotCount: 4,
       events: [event(1, 'Vault', 1)],
-      groups: [
-        group(1, 'A', [{ eventId: 1, duration: 45 }]),
-        group(2, 'B', [{ eventId: 1, duration: 45 }]),
+      classes: [
+        cls(1, 'A', [{ eventId: 1, duration: 45 }]),
+        cls(2, 'B', [{ eventId: 1, duration: 45 }]),
       ],
     })
     const result = expectFail(input)
     expect(result.reasons.join(' ')).toContain(
-      'Vault is overbooked: groups need 90 min on it but it only fits 60 min',
+      'Vault is overbooked: classes need 90 min on it but it only fits 60 min',
     )
   })
 
   it('required event is inactive', () => {
     const input = makeInput({
       events: [event(1, 'Pit', 1, false)],
-      groups: [group(1, 'Boys Team', [{ eventId: 1, duration: 30 }])],
+      classes: [cls(1, 'Boys Team', [{ eventId: 1, duration: 30 }])],
     })
     const result = expectFail(input)
     expect(result.reasons.join(' ')).toContain('Boys Team requires Pit, which is marked inactive')
@@ -145,7 +145,7 @@ describe('impossible sessions explain themselves', () => {
     const input = makeInput({
       rotationLength: 10,
       events: [event(1, 'Beam')],
-      groups: [group(1, 'Xcel', [{ eventId: 1, duration: 25 }])],
+      classes: [cls(1, 'Xcel', [{ eventId: 1, duration: 25 }])],
     })
     const result = expectFail(input)
     expect(result.reasons.join(' ')).toContain(
@@ -157,9 +157,9 @@ describe('impossible sessions explain themselves', () => {
     const input = makeInput({
       slotCount: 2,
       events: [event(1, 'Vault'), event(2, 'Pit', 1, false)],
-      groups: [
-        group(1, 'A', [{ eventId: 1, duration: 60 }]),
-        group(2, 'B', [{ eventId: 2, duration: 15 }]),
+      classes: [
+        cls(1, 'A', [{ eventId: 1, duration: 60 }]),
+        cls(2, 'B', [{ eventId: 2, duration: 15 }]),
       ],
     })
     const result = expectFail(input)
@@ -168,15 +168,15 @@ describe('impossible sessions explain themselves', () => {
 
   it('never returns a bare failure', () => {
     // Feasible on paper per-aggregate but unsolvable in arrangement:
-    // three groups × 2 contiguous slots on one capacity-1 event in 5 slots
-    // (aggregate 6 > 5 is caught; craft a subtler one: two groups needing
+    // three classes × 2 contiguous slots on one capacity-1 event in 5 slots
+    // (aggregate 6 > 5 is caught; craft a subtler one: two classes needing
     // 3 contiguous slots each on the same event within 5 slots).
     const input = makeInput({
       slotCount: 5,
       events: [event(1, 'Vault')],
-      groups: [
-        group(1, 'A', [{ eventId: 1, duration: 45 }]),
-        group(2, 'B', [{ eventId: 1, duration: 45 }]),
+      classes: [
+        cls(1, 'A', [{ eventId: 1, duration: 45 }]),
+        cls(2, 'B', [{ eventId: 1, duration: 45 }]),
       ],
     })
     const result = expectFail(input)
@@ -189,8 +189,8 @@ describe('locks', () => {
     makeInput({
       slotCount: 4,
       events: [event(1, 'Vault'), event(2, 'Beam')],
-      groups: [
-        group(1, 'Level 3', [
+      classes: [
+        cls(1, 'Level 3', [
           { eventId: 1, duration: 30 },
           { eventId: 2, duration: 30 },
         ]),
@@ -200,11 +200,11 @@ describe('locks', () => {
   it('preserves locked cells exactly and counts them toward requirements', () => {
     const input = base()
     input.locked = [
-      { slotIndex: 3, eventId: 1, groupId: 1, coachId: null, locked: true },
+      { slotIndex: 3, eventId: 1, classId: 1, coachId: null, locked: true },
     ]
     const result = expectOk(input)
     const lockKept = result.assignments.find(
-      (a) => a.slotIndex === 3 && a.eventId === 1 && a.groupId === 1,
+      (a) => a.slotIndex === 3 && a.eventId === 1 && a.classId === 1,
     )
     expect(lockKept?.locked).toBe(true)
     // 30 min vault = 2 slots; one is locked, so exactly one more generated.
@@ -212,11 +212,11 @@ describe('locks', () => {
     expect(result.assignments).toHaveLength(4)
   })
 
-  it('fails with an explanation when locks double-book a group', () => {
+  it('fails with an explanation when locks double-book a class', () => {
     const input = base()
     input.locked = [
-      { slotIndex: 0, eventId: 1, groupId: 1, coachId: null, locked: true },
-      { slotIndex: 0, eventId: 2, groupId: 1, coachId: null, locked: true },
+      { slotIndex: 0, eventId: 1, classId: 1, coachId: null, locked: true },
+      { slotIndex: 0, eventId: 2, classId: 1, coachId: null, locked: true },
     ]
     const result = expectFail(input)
     expect(result.reasons.join(' ')).toContain('Level 3 is locked in two places at rotation 1')
@@ -224,45 +224,45 @@ describe('locks', () => {
 
   it('fails with an explanation when locks double-book a coach', () => {
     const input = base()
-    input.groups.push(group(2, 'Level 5', []))
+    input.classes.push(cls(2, 'Level 5', []))
     input.coaches = [{ id: 9, name: 'Dana Marsh', specialties: [] }]
     input.locked = [
-      { slotIndex: 1, eventId: 1, groupId: 1, coachId: 9, locked: true },
-      { slotIndex: 1, eventId: 2, groupId: 2, coachId: 9, locked: true },
+      { slotIndex: 1, eventId: 1, classId: 1, coachId: 9, locked: true },
+      { slotIndex: 1, eventId: 2, classId: 2, coachId: 9, locked: true },
     ]
     const result = expectFail(input)
     expect(result.reasons.join(' ')).toContain('Dana Marsh is locked in two places at rotation 2')
   })
 
-  it('solves around locks from other groups', () => {
+  it('solves around locks from other classes', () => {
     const input = base()
-    input.groups.push(group(2, 'Level 5', []))
+    input.classes.push(cls(2, 'Level 5', []))
     input.locked = [
-      { slotIndex: 0, eventId: 1, groupId: 2, coachId: null, locked: true },
-      { slotIndex: 1, eventId: 1, groupId: 2, coachId: null, locked: true },
+      { slotIndex: 0, eventId: 1, classId: 2, coachId: null, locked: true },
+      { slotIndex: 1, eventId: 1, classId: 2, coachId: null, locked: true },
     ]
     const result = expectOk(input)
     // Level 3's vault slots must avoid the locked ones (capacity 1).
-    const level3Vault = result.assignments.filter((a) => a.groupId === 1 && a.eventId === 1)
+    const level3Vault = result.assignments.filter((a) => a.classId === 1 && a.eventId === 1)
     expect(level3Vault.map((a) => a.slotIndex).sort()).toEqual([2, 3])
   })
 })
 
 describe('soft constraints', () => {
-  it('gives higher-priority groups the contested event', () => {
-    // Both groups want all 4 slots of the single vault; impossible — so
+  it('gives higher-priority classes the contested event', () => {
+    // Both classes want all 4 slots of the single vault; impossible — so
     // shrink: both want 3 of 4 slots. Aggregate 6 > 4 fails. Use a
-    // different probe: priority group + filler group compete for vault
-    // early; assert the high-priority group's requirements are met (they
+    // different probe: priority class + filler class compete for vault
+    // early; assert the high-priority class's requirements are met (they
     // both must be met in any ok result), so instead assert determinism of
-    // placement order: the high-priority group gets vault when only one
+    // placement order: the high-priority class gets vault when only one
     // can have it at slot 0 — probe via locks occupying alternatives.
     const input = makeInput({
       slotCount: 2,
       events: [event(1, 'Vault'), event(2, 'Beam', 2)],
-      groups: [
-        group(1, 'Rec', [{ eventId: 1, duration: 15 }], 0),
-        group(2, 'Optionals', [{ eventId: 1, duration: 15 }], 5),
+      classes: [
+        cls(1, 'Rec', [{ eventId: 1, duration: 15 }], 0),
+        cls(2, 'Optionals', [{ eventId: 1, duration: 15 }], 5),
       ],
     })
     const result = expectOk(input)
@@ -273,14 +273,14 @@ describe('soft constraints', () => {
   })
 
   it('avoids a configured bad back-to-back pair when an alternative exists', () => {
-    // Group needs Conditioning (1 slot) and Beam (1 slot) in a 4-slot
+    // Class needs Conditioning (1 slot) and Beam (1 slot) in a 4-slot
     // session. Penalize conditioning→beam. With free room, they should not
     // land adjacent in that order.
     const input = makeInput({
       slotCount: 4,
       events: [event(1, 'Conditioning', 2), event(2, 'Beam')],
-      groups: [
-        group(1, 'Xcel', [
+      classes: [
+        cls(1, 'Xcel', [
           { eventId: 1, duration: 15 },
           { eventId: 2, duration: 15 },
         ]),
@@ -295,13 +295,13 @@ describe('soft constraints', () => {
     }
   })
 
-  it('keeps the assigned coach with the group in group mode', () => {
+  it('keeps the assigned coach with the class in class mode', () => {
     const input = makeInput({
       slotCount: 4,
       events: [event(1, 'Vault'), event(2, 'Beam')],
       coaches: [{ id: 7, name: 'Riley Cho', specialties: [] }],
-      groups: [
-        group(
+      classes: [
+        cls(
           1,
           'Level 3',
           [
@@ -322,9 +322,9 @@ describe('soft constraints', () => {
       slotCount: 1,
       events: [event(1, 'Vault'), event(2, 'Beam')],
       coaches: [{ id: 7, name: 'Riley Cho', specialties: [] }],
-      groups: [
-        group(1, 'A', [{ eventId: 1, duration: 15 }], 0, [7]),
-        group(2, 'B', [{ eventId: 2, duration: 15 }], 0, [7]),
+      classes: [
+        cls(1, 'A', [{ eventId: 1, duration: 15 }], 0, [7]),
+        cls(2, 'B', [{ eventId: 2, duration: 15 }], 0, [7]),
       ],
     })
     const result = expectOk(input)
@@ -341,8 +341,8 @@ describe('soft constraints', () => {
         { id: 7, name: 'Riley Cho', specialties: [2] },
         { id: 8, name: 'Sam Ortiz', specialties: [1] },
       ],
-      groups: [
-        group(1, 'A', [
+      classes: [
+        cls(1, 'A', [
           { eventId: 1, duration: 15 },
           { eventId: 2, duration: 15 },
         ]),
@@ -363,16 +363,16 @@ describe('determinism', () => {
       { id: 1, name: 'A', specialties: [1] },
       { id: 2, name: 'B', specialties: [2, 3] },
     ],
-    groups: [
-      group(1, 'G1', [
+    classes: [
+      cls(1, 'G1', [
         { eventId: 1, duration: 30 },
         { eventId: 3, duration: 30 },
       ], 1, [1]),
-      group(2, 'G2', [
+      cls(2, 'G2', [
         { eventId: 2, duration: 45 },
         { eventId: 3, duration: 15 },
       ], 2, [2]),
-      group(3, 'G3', [
+      cls(3, 'G3', [
         { eventId: 1, duration: 15 },
         { eventId: 2, duration: 30 },
       ], 1),

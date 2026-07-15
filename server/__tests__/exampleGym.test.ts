@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import request from 'supertest'
 import type { Express } from 'express'
-import type { Group, GymEvent, Session } from '../../shared/types.ts'
+import type { GymClass, GymEvent, Session } from '../../shared/types.ts'
 import { appWithAdmin } from './helpers.ts'
 
 let app: Express
@@ -21,29 +21,29 @@ describe('example gym', () => {
     await request(app).post('/api/example-gym').set('Cookie', cookie).expect(201)
 
     const events: GymEvent[] = (await request(app).get('/api/events').set('Cookie', cookie)).body.events
-    const groups: Group[] = (await request(app).get('/api/groups').set('Cookie', cookie)).body.groups
+    const classes: GymClass[] = (await request(app).get('/api/classes').set('Cookie', cookie)).body.classes
     const sessions: Session[] = (await request(app).get('/api/sessions').set('Cookie', cookie)).body.sessions
 
     expect(events.length).toBeGreaterThanOrEqual(5)
-    expect(groups.length).toBeGreaterThanOrEqual(3)
+    expect(classes.length).toBeGreaterThanOrEqual(3)
     expect(sessions).toHaveLength(1)
     expect(events.every((e) => e.isSample)).toBe(true)
 
-    // Referential integrity: groups only require seeded events,
-    // the session only contains seeded groups.
+    // Referential integrity: classes only require seeded events,
+    // the session only contains seeded classes.
     const eventIds = new Set(events.map((e) => e.id))
-    for (const group of groups) {
-      for (const req of group.requiredEvents) {
+    for (const cls of classes) {
+      for (const req of cls.requiredEvents) {
         expect(eventIds.has(req.eventId)).toBe(true)
       }
       // Durations are multiples of the session's rotation length.
-      for (const req of group.requiredEvents) {
+      for (const req of cls.requiredEvents) {
         expect(req.duration % sessions[0]!.rotationLength).toBe(0)
       }
     }
-    const groupIds = new Set(groups.map((g) => g.id))
-    for (const gid of sessions[0]!.groups) {
-      expect(groupIds.has(gid)).toBe(true)
+    const classIds = new Set(classes.map((c) => c.id))
+    for (const gid of sessions[0]!.classes) {
+      expect(classIds.has(gid)).toBe(true)
     }
   })
 
@@ -62,7 +62,7 @@ describe('example gym', () => {
 
     const events = (await request(app).get('/api/events').set('Cookie', cookie)).body.events
     expect(events).toEqual([real])
-    for (const path of ['/api/coaches', '/api/groups', '/api/sessions']) {
+    for (const path of ['/api/coaches', '/api/classes', '/api/sessions']) {
       const res = await request(app).get(path).set('Cookie', cookie)
       const list = Object.values(res.body)[0] as unknown[]
       expect(list).toHaveLength(0)

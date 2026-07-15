@@ -13,10 +13,11 @@ interface AssignmentRow {
   locked: number
 }
 
+// Storage keeps the pre-rename `group_id` column name; the API says classId.
 const toAssignment = (r: AssignmentRow): Assignment => ({
   slotIndex: r.slot_index,
   eventId: r.event_id,
-  groupId: r.group_id,
+  classId: r.group_id,
   coachId: r.coach_id,
   locked: r.locked === 1,
 })
@@ -32,16 +33,16 @@ function parseAssignments(body: unknown, maxSlot: number): Assignment[] {
     const assignment: Assignment = {
       slotIndex: reqInt(a.slotIndex, 'slotIndex', 0, maxSlot - 1),
       eventId: reqInt(a.eventId, 'eventId', 1, Number.MAX_SAFE_INTEGER),
-      groupId: reqInt(a.groupId, 'groupId', 1, Number.MAX_SAFE_INTEGER),
+      classId: reqInt(a.classId, 'classId', 1, Number.MAX_SAFE_INTEGER),
       coachId:
         a.coachId === null || a.coachId === undefined
           ? null
           : reqInt(a.coachId, 'coachId', 1, Number.MAX_SAFE_INTEGER),
       locked: a.locked === undefined ? false : reqBool(a.locked, 'locked'),
     }
-    const key = `${assignment.slotIndex}:${assignment.eventId}:${assignment.groupId}`
+    const key = `${assignment.slotIndex}:${assignment.eventId}:${assignment.classId}`
     if (seen.has(key)) {
-      throw new ApiError(400, 'duplicate assignment for the same slot, event, and group')
+      throw new ApiError(400, 'duplicate assignment for the same slot, event, and class')
     }
     seen.add(key)
     return assignment
@@ -80,13 +81,13 @@ export function assignmentRoutes(db: DatabaseSync): Router {
           'INSERT INTO assignments (session_id, slot_index, event_id, group_id, coach_id, locked) VALUES (?, ?, ?, ?, ?, ?)',
         )
         for (const a of assignments) {
-          insert.run(sessionId, a.slotIndex, a.eventId, a.groupId, a.coachId, a.locked ? 1 : 0)
+          insert.run(sessionId, a.slotIndex, a.eventId, a.classId, a.coachId, a.locked ? 1 : 0)
         }
       })
     } catch (err) {
-      // Foreign keys catch references to deleted events/groups/coaches.
+      // Foreign keys catch references to deleted events/classes/coaches.
       if (err instanceof Error && err.message.includes('FOREIGN KEY')) {
-        throw new ApiError(400, 'assignment references an event, group, or coach that no longer exists')
+        throw new ApiError(400, 'assignment references an event, class, or coach that no longer exists')
       }
       throw err
     }

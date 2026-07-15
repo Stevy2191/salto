@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
-import type { Coach, Group, GymEvent, RequiredEvent } from '../../shared/types.ts'
+import type { Coach, GymClass, GymEvent, RequiredEvent } from '../../shared/types.ts'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api.ts'
 import { useLoad } from '../lib/useLoad.ts'
 import {
@@ -16,7 +16,7 @@ import {
   TextInput,
 } from '../components/ui.tsx'
 
-export interface GroupFormValues {
+export interface ClassFormValues {
   name: string
   priority: number
   requiredEvents: RequiredEvent[]
@@ -88,23 +88,23 @@ function RequiredEventsEditor({
         </Button>
       )}
       {events.length === 0 && (
-        <p className="text-sm text-slate-400">Create events first, then set what this group needs.</p>
+        <p className="text-sm text-slate-400">Create events first, then set what this class needs.</p>
       )}
     </div>
   )
 }
 
-export function GroupForm({
+export function ClassForm({
   initial,
   events,
   coaches,
   onSave,
   onCancel,
 }: {
-  initial: GroupFormValues
+  initial: ClassFormValues
   events: GymEvent[]
   coaches: Coach[]
-  onSave: (values: GroupFormValues) => Promise<void>
+  onSave: (values: ClassFormValues) => Promise<void>
   onCancel?: () => void
 }) {
   const [name, setName] = useState(initial.name)
@@ -131,7 +131,7 @@ export function GroupForm({
     <form onSubmit={submit} className="space-y-3">
       <ErrorNote message={error} />
       <div className="grid gap-3 sm:grid-cols-[1fr_8rem]">
-        <Field label="Group name">
+        <Field label="Class name">
           <TextInput
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -172,34 +172,34 @@ export function GroupForm({
   )
 }
 
-export function GroupsPage() {
-  const groupsLoad = useLoad(() => apiGet<{ groups: Group[] }>('/api/groups'))
+export function ClassesPage() {
+  const classesLoad = useLoad(() => apiGet<{ classes: GymClass[] }>('/api/classes'))
   const eventsLoad = useLoad(() => apiGet<{ events: GymEvent[] }>('/api/events'))
   const coachesLoad = useLoad(() => apiGet<{ coaches: Coach[] }>('/api/coaches'))
   const [editingId, setEditingId] = useState<number | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
 
-  const groups = groupsLoad.data?.groups ?? []
+  const classes = classesLoad.data?.classes ?? []
   const events = eventsLoad.data?.events ?? []
   const coaches = coachesLoad.data?.coaches ?? []
 
-  async function remove(group: Group) {
-    if (!confirm(`Delete "${group.name}"? Its schedule cells will be removed.`)) return
+  async function remove(cls: GymClass) {
+    if (!confirm(`Delete "${cls.name}"? Its schedule cells will be removed.`)) return
     try {
-      await apiDelete(`/api/groups/${group.id}`)
+      await apiDelete(`/api/classes/${cls.id}`)
       setActionError(null)
-      await groupsLoad.reload()
+      await classesLoad.reload()
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'delete failed')
     }
   }
 
-  function describe(group: Group): string {
-    const total = group.requiredEvents.reduce((sum, r) => sum + r.duration, 0)
-    const names = group.requiredEvents
+  function describe(cls: GymClass): string {
+    const total = cls.requiredEvents.reduce((sum, r) => sum + r.duration, 0)
+    const names = cls.requiredEvents
       .map((r) => events.find((e) => e.id === r.eventId)?.name)
       .filter(Boolean)
-    const coachNames = group.assignedCoaches
+    const coachNames = cls.assignedCoaches
       .map((id) => coaches.find((c) => c.id === id)?.name)
       .filter(Boolean)
     const parts = [
@@ -211,58 +211,58 @@ export function GroupsPage() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Groups" />
-      <ErrorNote message={groupsLoad.error ?? eventsLoad.error ?? coachesLoad.error ?? actionError} />
+      <PageHeader title="Classes" />
+      <ErrorNote message={classesLoad.error ?? eventsLoad.error ?? coachesLoad.error ?? actionError} />
       <Card>
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
-          Add group
+          Add class
         </h2>
-        <GroupForm
+        <ClassForm
           initial={{ name: '', priority: 0, requiredEvents: [], assignedCoaches: [] }}
           events={events}
           coaches={coaches}
           onSave={async (values) => {
-            await apiPost('/api/groups', values)
-            await groupsLoad.reload()
+            await apiPost('/api/classes', values)
+            await classesLoad.reload()
           }}
         />
       </Card>
       <Card>
-        {groups.length === 0 && <EmptyNote>No groups yet.</EmptyNote>}
+        {classes.length === 0 && <EmptyNote>No classes yet.</EmptyNote>}
         <ul className="divide-y divide-slate-100">
-          {groups.map((group) =>
-            editingId === group.id ? (
-              <li key={group.id} className="py-3">
-                <GroupForm
-                  initial={group}
+          {classes.map((cls) =>
+            editingId === cls.id ? (
+              <li key={cls.id} className="py-3">
+                <ClassForm
+                  initial={cls}
                   events={events}
                   coaches={coaches}
                   onCancel={() => setEditingId(null)}
                   onSave={async (values) => {
-                    await apiPut(`/api/groups/${group.id}`, values)
+                    await apiPut(`/api/classes/${cls.id}`, values)
                     setEditingId(null)
-                    await groupsLoad.reload()
+                    await classesLoad.reload()
                   }}
                 />
               </li>
             ) : (
-              <li key={group.id} className="flex flex-wrap items-center gap-2 py-3">
+              <li key={cls.id} className="flex flex-wrap items-center gap-2 py-3">
                 <div className="flex-1">
-                  <span className="font-medium text-slate-900">{group.name}</span>
+                  <span className="font-medium text-slate-900">{cls.name}</span>
                   <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-600">
-                    priority {group.priority}
+                    priority {cls.priority}
                   </span>
-                  {group.isSample && (
+                  {cls.isSample && (
                     <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700">
                       sample
                     </span>
                   )}
-                  <p className="text-sm text-slate-500">{describe(group)}</p>
+                  <p className="text-sm text-slate-500">{describe(cls)}</p>
                 </div>
-                <Button variant="secondary" onClick={() => setEditingId(group.id)}>
+                <Button variant="secondary" onClick={() => setEditingId(cls.id)}>
                   Edit
                 </Button>
-                <Button variant="danger" onClick={() => void remove(group)}>
+                <Button variant="danger" onClick={() => void remove(cls)}>
                   Delete
                 </Button>
               </li>

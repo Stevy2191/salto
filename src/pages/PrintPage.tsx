@@ -1,15 +1,15 @@
 import { Link, useParams } from 'react-router-dom'
-import type { Assignment, Coach, Group, GymEvent, Session } from '../../shared/types.ts'
+import type { Assignment, Coach, GymClass, GymEvent, Session } from '../../shared/types.ts'
 import { slotCount, slotStart } from '../../shared/slots.ts'
 import { textColorFor } from '../../shared/colors.ts'
 import { DAY_NAMES, apiGet } from '../lib/api.ts'
 import { useLoad } from '../lib/useLoad.ts'
-import { groupBlocks } from '../lib/blocks.ts'
+import { classBlocks } from '../lib/blocks.ts'
 import { Button, ErrorNote } from '../components/ui.tsx'
 import { sessionLabel } from './SessionsPage.tsx'
 
-// Print-optimized session schedule: By Groups block layout with the same
-// event colors as the Excel export, plus per-group "where do I go next"
+// Print-optimized session schedule: By classes block layout with the same
+// event colors as the Excel export, plus per-class "where do I go next"
 // strips. Black-and-white friendly: event names are always in text and
 // every cell is bordered, so the page reads without color.
 export function PrintPage() {
@@ -18,7 +18,7 @@ export function PrintPage() {
 
   const sessionLoad = useLoad(() => apiGet<{ session: Session }>(`/api/sessions/${sessionId}`))
   const eventsLoad = useLoad(() => apiGet<{ events: GymEvent[] }>('/api/events'))
-  const groupsLoad = useLoad(() => apiGet<{ groups: Group[] }>('/api/groups'))
+  const classesLoad = useLoad(() => apiGet<{ classes: GymClass[] }>('/api/classes'))
   const coachesLoad = useLoad(() => apiGet<{ coaches: Coach[] }>('/api/coaches'))
   const assignmentsLoad = useLoad(() =>
     apiGet<{ assignments: Assignment[] }>(`/api/sessions/${sessionId}/assignments`),
@@ -27,7 +27,7 @@ export function PrintPage() {
   const loadError =
     sessionLoad.error ??
     eventsLoad.error ??
-    groupsLoad.error ??
+    classesLoad.error ??
     coachesLoad.error ??
     assignmentsLoad.error
   if (loadError) return <ErrorNote message={loadError} />
@@ -37,23 +37,23 @@ export function PrintPage() {
   if (!session || !assignments) return null
 
   const events = eventsLoad.data?.events ?? []
-  const groups = groupsLoad.data?.groups ?? []
+  const classes = classesLoad.data?.classes ?? []
   const coaches = coachesLoad.data?.coaches ?? []
 
   const slots = slotCount(session)
   const slotIndexes = Array.from({ length: slots }, (_, i) => i)
-  const columnGroups = groups.filter(
-    (g) => session.groups.includes(g.id) || assignments.some((a) => a.groupId === g.id),
+  const columnClasses = classes.filter(
+    (g) => session.classes.includes(g.id) || assignments.some((a) => a.classId === g.id),
   )
   const eventName = (id: number) => events.find((e) => e.id === id)?.name ?? 'Unknown'
   const eventColor = (id: number) => events.find((e) => e.id === id)?.color ?? '#BAB0AC'
   const coachName = (id: number | null) =>
     id === null ? undefined : coaches.find((c) => c.id === id)?.name
 
-  const columns = columnGroups.map((group) => {
-    const blocks = groupBlocks(assignments, group.id, slots)
+  const columns = columnClasses.map((cls) => {
+    const blocks = classBlocks(assignments, cls.id, slots)
     return {
-      group,
+      cls,
       blocks,
       startMap: new Map(blocks.map((b) => [b.startSlot, b])),
       covered: new Set(
@@ -96,13 +96,13 @@ export function PrintPage() {
             >
               Time
             </th>
-            {columns.map(({ group }) => (
+            {columns.map(({ cls }) => (
               <th
-                key={group.id}
+                key={cls.id}
                 className="border-2 border-black px-2 py-1 text-left text-base font-bold"
                 style={{ backgroundColor: '#FFFF00' }}
               >
-                {group.name}
+                {cls.name}
               </th>
             ))}
           </tr>
@@ -116,16 +116,16 @@ export function PrintPage() {
               >
                 {timeLabel(slot)}
               </th>
-              {columns.map(({ group, startMap, covered }) => {
+              {columns.map(({ cls, startMap, covered }) => {
                 if (covered.has(slot)) return null
                 const block = startMap.get(slot)
                 if (!block) {
-                  return <td key={group.id} className="border border-black" />
+                  return <td key={cls.id} className="border border-black" />
                 }
                 const color = eventColor(block.eventId)
                 return (
                   <td
-                    key={group.id}
+                    key={cls.id}
                     rowSpan={block.length}
                     className="border-2 border-black px-2 py-1 align-top text-base font-semibold"
                     style={{ backgroundColor: color, color: textColorFor(color) }}
@@ -147,15 +147,15 @@ export function PrintPage() {
       <section className="mt-8 break-before-page print:mt-0">
         <h2 className="text-xl font-black text-black">Where do I go next?</h2>
         <p className="text-sm text-slate-600 print:text-black">
-          One strip per group — cut them apart for individual coaches.
+          One strip per class — cut them apart for individual coaches.
         </p>
         <div className="mt-3 space-y-3">
-          {columns.map(({ group, blocks }) => (
+          {columns.map(({ cls, blocks }) => (
             <div
-              key={group.id}
+              key={cls.id}
               className="break-inside-avoid rounded border-2 border-dashed border-black p-3"
             >
-              <span className="text-base font-bold">{group.name}</span>
+              <span className="text-base font-bold">{cls.name}</span>
               <p className="mt-1 text-base leading-relaxed">
                 {blocks.length === 0
                   ? 'No rotations scheduled.'

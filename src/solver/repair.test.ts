@@ -14,7 +14,7 @@ const event = (id: number, name: string, capacity = 1, active = true) => ({
 function baseInput(overrides: Partial<SolverInput>): SolverInput {
   return {
     events: [event(1, 'Vault'), event(2, 'Beam')],
-    groups: [
+    classes: [
       {
         id: 1,
         name: 'Level 3 Girls',
@@ -43,7 +43,7 @@ function baseInput(overrides: Partial<SolverInput>): SolverInput {
     ],
     slotCount: 4,
     rotationLength: 15,
-    coachMode: 'group',
+    coachMode: 'class',
     adjacencyPenalties: [],
     locked: [],
     seed: 1,
@@ -82,7 +82,7 @@ describe('repair: absent coach', () => {
 
     // Same cells, exactly — only coaches may differ.
     const cells = (list: typeof original) =>
-      list.map((a) => `${a.slotIndex}:${a.eventId}:${a.groupId}`).sort()
+      list.map((a) => `${a.slotIndex}:${a.eventId}:${a.classId}`).sort()
     expect(cells(result.assignments)).toEqual(cells(original))
     expect(result.assignments.every((a) => a.coachId !== 7)).toBe(true)
 
@@ -96,7 +96,7 @@ describe('repair: absent coach', () => {
   it('leaves the cell coachless when no substitute is free, and says so', () => {
     const base = baseInput({
       coaches: [{ id: 7, name: 'Dana Marsh', specialties: [1, 2] }],
-      groups: baseInput({}).groups.map((g) => ({ ...g, assignedCoaches: [7] })),
+      classes: baseInput({}).classes.map((g) => ({ ...g, assignedCoaches: [7] })),
     })
     const original = generated(base)
     const result = repairSchedule(repairInput(base, { original, absentCoachIds: [7] }))
@@ -106,7 +106,7 @@ describe('repair: absent coach', () => {
 
     const messages = describeRepairChanges(result.changes, {
       events: base.events,
-      groups: base.groups,
+      classes: base.classes,
       coaches: base.coaches,
       startTime: '16:00',
       rotationLength: 15,
@@ -123,7 +123,7 @@ describe('repair: absent coach', () => {
     for (const a of original) {
       if (a.coachId === 7) continue
       const kept = result.assignments.find(
-        (x) => x.slotIndex === a.slotIndex && x.eventId === a.eventId && x.groupId === a.groupId,
+        (x) => x.slotIndex === a.slotIndex && x.eventId === a.eventId && x.classId === a.classId,
       )
       expect(kept).toEqual(a)
     }
@@ -147,7 +147,7 @@ describe('repair: event out for the session', () => {
 
     const messages = describeRepairChanges(result.changes, {
       events: base.events,
-      groups: base.groups,
+      classes: base.classes,
       coaches: base.coaches,
       startTime: '16:00',
       rotationLength: 15,
@@ -163,8 +163,8 @@ describe('repair: event out for the session', () => {
     if (!result.ok) throw new Error('expected ok')
     const lockedCells = result.assignments.filter((a) => a.locked)
     const originalLocked = original.filter((a) => a.locked && a.eventId !== 0)
-    expect(lockedCells.map((a) => `${a.slotIndex}:${a.eventId}:${a.groupId}`)).toEqual(
-      originalLocked.map((a) => `${a.slotIndex}:${a.eventId}:${a.groupId}`),
+    expect(lockedCells.map((a) => `${a.slotIndex}:${a.eventId}:${a.classId}`)).toEqual(
+      originalLocked.map((a) => `${a.slotIndex}:${a.eventId}:${a.classId}`),
     )
   })
 })
@@ -172,10 +172,10 @@ describe('repair: event out for the session', () => {
 describe('repair: filling uncovered requirements', () => {
   it('places requirements the original schedule was missing', () => {
     const base = baseInput({})
-    // Original only covers group 1's vault — everything else is missing.
+    // Original only covers class 1's vault — everything else is missing.
     const original = [
-      { slotIndex: 0, eventId: 1, groupId: 1, coachId: 7 },
-      { slotIndex: 1, eventId: 1, groupId: 1, coachId: 7 },
+      { slotIndex: 0, eventId: 1, classId: 1, coachId: 7 },
+      { slotIndex: 1, eventId: 1, classId: 1, coachId: 7 },
     ]
     const result = repairSchedule(repairInput(base, { original }))
     expect(result.ok).toBe(true)
@@ -184,22 +184,22 @@ describe('repair: filling uncovered requirements', () => {
     for (const a of original) {
       expect(result.assignments).toContainEqual({ ...a, locked: false })
     }
-    // …and each group now has its full 4 slots of requirements.
-    for (const groupId of [1, 2]) {
-      expect(result.assignments.filter((a) => a.groupId === groupId)).toHaveLength(4)
+    // …and each class now has its full 4 slots of requirements.
+    for (const classId of [1, 2]) {
+      expect(result.assignments.filter((a) => a.classId === classId)).toHaveLength(4)
     }
     expect(result.changes.some((c) => c.kind === 'added')).toBe(true)
   })
 
   it('explains impossibility in plain language', () => {
     const base = baseInput({})
-    // Group 2's beam requirement is uncovered, but group 1 holds beam for
+    // Class 2's beam requirement is uncovered, but class 1 holds beam for
     // slots 0–1 and vault demand fills the rest — session too tight after
     // shrinking to 2 slots.
     const tight = { ...base, slotCount: 2 }
     const original = [
-      { slotIndex: 0, eventId: 2, groupId: 1, coachId: null },
-      { slotIndex: 1, eventId: 2, groupId: 1, coachId: null },
+      { slotIndex: 0, eventId: 2, classId: 1, coachId: null },
+      { slotIndex: 1, eventId: 2, classId: 1, coachId: null },
     ]
     const result = repairSchedule(repairInput(tight, { original }))
     expect(result.ok).toBe(false)

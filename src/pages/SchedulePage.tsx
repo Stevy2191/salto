@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import type { Assignment, Coach, Group, GymEvent, Session, Settings } from '../../shared/types.ts'
+import type { Assignment, Coach, GymClass, GymEvent, Session, Settings } from '../../shared/types.ts'
 import { slotCount, slotStart } from '../../shared/slots.ts'
 import { DAY_NAMES, apiGet, apiPut } from '../lib/api.ts'
 import { useLoad } from '../lib/useLoad.ts'
 import { CONFLICT_LABELS, assignmentKey, findConflicts } from '../lib/conflicts.ts'
-import { groupColor } from '../lib/colors.ts'
+import { classColor } from '../lib/colors.ts'
 import { textColorFor } from '../../shared/colors.ts'
 import { generateSchedule } from '../solver/solver.ts'
 import { describeRepairChanges, repairSchedule } from '../solver/repair.ts'
@@ -64,7 +64,7 @@ function CopySessionDialog({
       >
         <h2 className="font-semibold text-slate-900">Copy this session</h2>
         <p className="text-sm text-slate-600">
-          Same groups, rotation length, duration, and schedule — pick when it happens. Copied
+          Same classes, rotation length, duration, and schedule — pick when it happens. Copied
           assignments arrive unlocked.
         </p>
         <ErrorNote message={error} />
@@ -102,20 +102,20 @@ function CopySessionDialog({
 }
 
 type SaveState = 'saved' | 'saving' | 'error'
-type ViewMode = 'events' | 'groups'
+type ViewMode = 'events' | 'classes'
 
-/** Where the user clicked: a slot plus the fixed row (event or group). */
+/** Where the user clicked: a slot plus the fixed row (event or class). */
 interface PickerTarget {
   slotIndex: number
   eventId?: number
-  groupId?: number
+  classId?: number
 }
 
 function AssignmentPicker({
   target,
   session,
   events,
-  groups,
+  classes,
   coaches,
   onAdd,
   onClose,
@@ -123,37 +123,37 @@ function AssignmentPicker({
   target: PickerTarget
   session: Session
   events: GymEvent[]
-  groups: Group[]
+  classes: GymClass[]
   coaches: Coach[]
   onAdd: (a: Assignment) => void
   onClose: () => void
 }) {
-  const sessionGroups = groups.filter((g) => session.groups.includes(g.id))
+  const sessionClasses = classes.filter((g) => session.classes.includes(g.id))
   const activeEvents = events.filter((e) => e.active)
-  const needsGroup = target.groupId === undefined
+  const needsClass = target.classId === undefined
   const needsEvent = target.eventId === undefined
 
-  const [groupId, setGroupId] = useState<number | undefined>(
-    target.groupId ?? sessionGroups[0]?.id,
+  const [classId, setClassId] = useState<number | undefined>(
+    target.classId ?? sessionClasses[0]?.id,
   )
   const [eventId, setEventId] = useState<number | undefined>(target.eventId ?? activeEvents[0]?.id)
-  const group = groups.find((g) => g.id === groupId)
+  const cls = classes.find((g) => g.id === classId)
   const [coachId, setCoachId] = useState<number | ''>('')
 
-  // Default to the group's first assigned coach whenever the group changes.
+  // Default to the class's first assigned coach whenever the class changes.
   useEffect(() => {
-    setCoachId(group?.assignedCoaches[0] ?? '')
-  }, [group])
+    setCoachId(cls?.assignedCoaches[0] ?? '')
+  }, [cls])
 
   const sortedCoaches = [...coaches].sort((a, b) => {
-    const aAssigned = group?.assignedCoaches.includes(a.id) ? 0 : 1
-    const bAssigned = group?.assignedCoaches.includes(b.id) ? 0 : 1
+    const aAssigned = cls?.assignedCoaches.includes(a.id) ? 0 : 1
+    const bAssigned = cls?.assignedCoaches.includes(b.id) ? 0 : 1
     return aAssigned - bAssigned || a.name.localeCompare(b.name)
   })
 
   const eventName = events.find((e) => e.id === target.eventId)?.name
   const title = [
-    eventName ?? groups.find((g) => g.id === target.groupId)?.name,
+    eventName ?? classes.find((g) => g.id === target.classId)?.name,
     `at ${slotStart(session, target.slotIndex)}`,
   ].join(' ')
 
@@ -167,10 +167,10 @@ function AssignmentPicker({
         onClick={(e) => e.stopPropagation()}
       >
         <h2 className="font-semibold text-slate-900">Assign — {title}</h2>
-        {needsGroup && (
-          <Field label="Group">
-            <Select value={groupId ?? ''} onChange={(e) => setGroupId(Number(e.target.value))}>
-              {sessionGroups.map((g) => (
+        {needsClass && (
+          <Field label="Class">
+            <Select value={classId ?? ''} onChange={(e) => setClassId(Number(e.target.value))}>
+              {sessionClasses.map((g) => (
                 <option key={g.id} value={g.id}>
                   {g.name}
                 </option>
@@ -198,20 +198,20 @@ function AssignmentPicker({
             {sortedCoaches.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
-                {group?.assignedCoaches.includes(c.id) ? ' (assigned)' : ''}
+                {cls?.assignedCoaches.includes(c.id) ? ' (assigned)' : ''}
               </option>
             ))}
           </Select>
         </Field>
         <div className="flex gap-2">
           <Button
-            disabled={groupId === undefined || eventId === undefined}
+            disabled={classId === undefined || eventId === undefined}
             onClick={() => {
-              if (groupId === undefined || eventId === undefined) return
+              if (classId === undefined || eventId === undefined) return
               onAdd({
                 slotIndex: target.slotIndex,
                 eventId,
-                groupId,
+                classId,
                 coachId: coachId === '' ? null : coachId,
               })
               onClose()
@@ -313,7 +313,7 @@ export function SchedulePage() {
 
   const sessionLoad = useLoad(() => apiGet<{ session: Session }>(`/api/sessions/${sessionId}`))
   const eventsLoad = useLoad(() => apiGet<{ events: GymEvent[] }>('/api/events'))
-  const groupsLoad = useLoad(() => apiGet<{ groups: Group[] }>('/api/groups'))
+  const classesLoad = useLoad(() => apiGet<{ classes: GymClass[] }>('/api/classes'))
   const coachesLoad = useLoad(() => apiGet<{ coaches: Coach[] }>('/api/coaches'))
   const assignmentsLoad = useLoad(() =>
     apiGet<{ assignments: Assignment[] }>(`/api/sessions/${sessionId}/assignments`),
@@ -334,7 +334,7 @@ export function SchedulePage() {
 
   const session = sessionLoad.data?.session
   const events = eventsLoad.data?.events ?? []
-  const groups = groupsLoad.data?.groups ?? []
+  const classes = classesLoad.data?.classes ?? []
   const coaches = coachesLoad.data?.coaches ?? []
 
   const conflicts = useMemo(
@@ -360,7 +360,7 @@ export function SchedulePage() {
   const loadError =
     sessionLoad.error ??
     eventsLoad.error ??
-    groupsLoad.error ??
+    classesLoad.error ??
     coachesLoad.error ??
     assignmentsLoad.error ??
     settingsLoad.error
@@ -369,9 +369,9 @@ export function SchedulePage() {
 
   const slots = slotCount(session)
   const slotIndexes = Array.from({ length: slots }, (_, i) => i)
-  const sessionGroups = groups.filter((g) => session.groups.includes(g.id))
+  const sessionClasses = classes.filter((g) => session.classes.includes(g.id))
   const rowEvents = events.filter((e) => e.active || assignments.some((a) => a.eventId === e.id))
-  const groupName = (id: number) => groups.find((g) => g.id === id)?.name ?? 'deleted group'
+  const classNameOf = (id: number) => classes.find((g) => g.id === id)?.name ?? 'deleted class'
   const eventNameOf = (id: number) => events.find((e) => e.id === id)?.name ?? 'deleted event'
   const eventColorOf = (id: number) => events.find((e) => e.id === id)?.color
   const coachName = (id: number | null) =>
@@ -392,15 +392,15 @@ export function SchedulePage() {
       ),
     )
 
-  // A "block" is a run of consecutive slots where a group stays on the same
-  // event with the same coach. The By Groups view renders blocks — label on
+  // A "block" is a run of consecutive slots where a class stays on the same
+  // event with the same coach. The By classes view renders blocks — label on
   // the first cell, color carried through — and lock/remove act block-wide.
-  const sameCell = (a: Assignment, groupId: number, slotIndex: number) =>
-    a.groupId === groupId && a.slotIndex === slotIndex
+  const sameCell = (a: Assignment, classId: number, slotIndex: number) =>
+    a.classId === classId && a.slotIndex === slotIndex
   const continuesFromPrev = (a: Assignment) =>
     assignments.some(
       (x) =>
-        sameCell(x, a.groupId, a.slotIndex - 1) &&
+        sameCell(x, a.classId, a.slotIndex - 1) &&
         x.eventId === a.eventId &&
         x.coachId === a.coachId,
     )
@@ -408,7 +408,7 @@ export function SchedulePage() {
     const run = [start]
     for (let s = start.slotIndex + 1; ; s++) {
       const next = assignments.find(
-        (x) => sameCell(x, start.groupId, s) && x.eventId === start.eventId && x.coachId === start.coachId,
+        (x) => sameCell(x, start.classId, s) && x.eventId === start.eventId && x.coachId === start.coachId,
       )
       if (!next) break
       run.push(next)
@@ -444,7 +444,7 @@ export function SchedulePage() {
     }
     const result = generateSchedule({
       events: events.map(({ id, name, capacity, active }) => ({ id, name, capacity, active })),
-      groups: sessionGroups.map(({ id, name, priority, requiredEvents, assignedCoaches }) => ({
+      classes: sessionClasses.map(({ id, name, priority, requiredEvents, assignedCoaches }) => ({
         id,
         name,
         priority,
@@ -493,7 +493,7 @@ export function SchedulePage() {
     if (!settingsLoad.data) return
     const result = repairSchedule({
       events: events.map(({ id, name, capacity, active }) => ({ id, name, capacity, active })),
-      groups: sessionGroups.map(({ id, name, priority, requiredEvents, assignedCoaches }) => ({
+      classes: sessionClasses.map(({ id, name, priority, requiredEvents, assignedCoaches }) => ({
         id,
         name,
         priority,
@@ -514,7 +514,7 @@ export function SchedulePage() {
       setRepairSummary(
         describeRepairChanges(result.changes, {
           events,
-          groups,
+          classes,
           coaches,
           startTime: session.startTime,
           rotationLength: session.rotationLength,
@@ -530,13 +530,13 @@ export function SchedulePage() {
 
   const conflictCount = conflicts.size
 
-  // By Groups view: block-aware cells. The first slot of a block gets the
+  // By classes view: block-aware cells. The first slot of a block gets the
   // full chip (acting on the whole block); continuations are color-only.
-  const groupCell = (group: Group, slotIndex: number) => {
-    const here = assignments.filter((a) => sameCell(a, group.id, slotIndex))
-    const target: PickerTarget = { slotIndex, groupId: group.id }
+  const classCell = (cls: GymClass, slotIndex: number) => {
+    const here = assignments.filter((a) => sameCell(a, cls.id, slotIndex))
+    const target: PickerTarget = { slotIndex, classId: cls.id }
     const conflicted = here.some((a) => conflicts.has(assignmentKey(a)))
-    const key = `${slotIndex}:g${group.id}`
+    const key = `${slotIndex}:g${cls.id}`
 
     if (here.length > 0 && here.every(continuesFromPrev)) {
       const a = here[0]!
@@ -578,7 +578,7 @@ export function SchedulePage() {
               key={assignmentKey(a)}
               label={eventNameOf(a.eventId)}
               sub={coachName(a.coachId)}
-              colorClass={groupColor(a.groupId)}
+              colorClass={classColor(a.classId)}
               customColor={eventColorOf(a.eventId)}
               blockStart
               conflictReasons={conflicts.get(assignmentKey(a))?.map((r) => CONFLICT_LABELS[r])}
@@ -606,7 +606,7 @@ export function SchedulePage() {
     const conflicted = list.some((a) => conflicts.has(assignmentKey(a)))
     return (
       <td
-        key={`${target.slotIndex}:${target.eventId ?? 'g'}:${target.groupId ?? 'e'}`}
+        key={`${target.slotIndex}:${target.eventId ?? 'g'}:${target.classId ?? 'e'}`}
         className={`min-w-28 rounded-lg p-1 align-top ring-1 ${
           conflicted ? 'bg-red-50 ring-red-400' : 'bg-white ring-slate-200'
         }`}
@@ -617,11 +617,11 @@ export function SchedulePage() {
               key={assignmentKey(a)}
               label={labelOf(a)}
               sub={coachName(a.coachId)}
-              colorClass={groupColor(a.groupId)}
-              // In the By Groups view the chip answers "which event?", so it
+              colorClass={classColor(a.classId)}
+              // In the By classes view the chip answers "which event?", so it
               // wears the event color; in By Events view the column already
-              // is the event, so chips keep group colors.
-              customColor={target.groupId !== undefined ? eventColorOf(a.eventId) : undefined}
+              // is the event, so chips keep class colors.
+              customColor={target.classId !== undefined ? eventColorOf(a.eventId) : undefined}
               conflictReasons={conflicts
                 .get(assignmentKey(a))
                 ?.map((r) => CONFLICT_LABELS[r])}
@@ -650,7 +650,7 @@ export function SchedulePage() {
           <p className="flex-1 text-sm text-indigo-900">
             🎉 <span className="font-semibold">Setup complete</span> — this is your schedule
             grid. Hit <span className="font-semibold">Generate schedule</span> to auto-fill the
-            rotation, or tap any <span className="font-semibold">+</span> cell to assign a group
+            rotation, or tap any <span className="font-semibold">+</span> cell to assign a class
             manually.
           </p>
           <Button variant="secondary" onClick={() => setSearchParams({}, { replace: true })}>
@@ -687,7 +687,7 @@ export function SchedulePage() {
             {saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? 'Saved' : 'Save failed'}
           </span>
           <div className="flex rounded-lg bg-slate-200 p-0.5">
-            {(['events', 'groups'] as const).map((mode) => (
+            {(['events', 'classes'] as const).map((mode) => (
               <button
                 key={mode}
                 onClick={() => setView(mode)}
@@ -703,7 +703,7 @@ export function SchedulePage() {
       </PageHeader>
 
       <div className="flex flex-wrap items-center gap-3">
-        {sessionGroups.length > 0 && (
+        {sessionClasses.length > 0 && (
           <>
             <Button onClick={generate}>Generate schedule</Button>
             {assignments.length > 0 && (
@@ -807,19 +807,19 @@ export function SchedulePage() {
         </div>
       )}
 
-      {sessionGroups.length === 0 ? (
+      {sessionClasses.length === 0 ? (
         <Card>
           <p className="text-sm text-slate-600">
-            This session has no groups yet.{' '}
+            This session has no classes yet.{' '}
             <Link className="font-medium text-indigo-600" to="/sessions">
               Edit the session
             </Link>{' '}
-            to add the groups that attend, then build the rotation here.
+            to add the classes that attend, then build the rotation here.
           </p>
         </Card>
       ) : (
         <div className="overflow-x-auto pb-2">
-          {/* Day-planner orientation: events (or groups) across the top,
+          {/* Day-planner orientation: events (or classes) across the top,
               time slots down the left. */}
           <table className="border-separate border-spacing-1">
             <thead>
@@ -853,12 +853,12 @@ export function SchedulePage() {
                         />
                       </th>
                     ))
-                  : sessionGroups.map((group) => (
+                  : sessionClasses.map((cls) => (
                       <th
-                        key={group.id}
+                        key={cls.id}
                         className="min-w-28 p-1 text-left text-sm font-semibold text-slate-800"
                       >
-                        {group.name}
+                        {cls.name}
                       </th>
                     ))}
               </tr>
@@ -876,10 +876,10 @@ export function SchedulePage() {
                             (a) => a.eventId === event.id && a.slotIndex === slotIndex,
                           ),
                           { slotIndex, eventId: event.id },
-                          (a) => groupName(a.groupId),
+                          (a) => classNameOf(a.classId),
                         ),
                       )
-                    : sessionGroups.map((group) => groupCell(group, slotIndex))}
+                    : sessionClasses.map((cls) => classCell(cls, slotIndex))}
                 </tr>
               ))}
             </tbody>
@@ -899,7 +899,7 @@ export function SchedulePage() {
           target={picker}
           session={session}
           events={events}
-          groups={groups}
+          classes={classes}
           coaches={coaches}
           onAdd={add}
           onClose={() => setPicker(null)}

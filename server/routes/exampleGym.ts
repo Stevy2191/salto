@@ -51,11 +51,11 @@ function seed(db: DatabaseSync): void {
     )
   }
 
-  const insertGroup = db.prepare(
+  const insertClass = db.prepare(
     'INSERT INTO groups (name, priority, required_events, assigned_coaches, is_sample) VALUES (?, ?, ?, ?, 1)',
   )
-  const groupIds: number[] = []
-  const groups: [string, number, [number, number][], number[]][] = [
+  const classIds: number[] = []
+  const classes: [string, number, [number, number][], number[]][] = [
     [
       'Level 3 Girls',
       1,
@@ -102,11 +102,11 @@ function seed(db: DatabaseSync): void {
       [coachIds['Sam Ortiz']!],
     ],
   ]
-  for (const [name, priority, required, coaches] of groups) {
+  for (const [name, priority, required, coaches] of classes) {
     const requiredEvents = required.map(([eventId, duration]) => ({ eventId, duration }))
-    groupIds.push(
+    classIds.push(
       Number(
-        insertGroup.run(name, priority, JSON.stringify(requiredEvents), JSON.stringify(coaches))
+        insertClass.run(name, priority, JSON.stringify(requiredEvents), JSON.stringify(coaches))
           .lastInsertRowid,
       ),
     )
@@ -114,7 +114,7 @@ function seed(db: DatabaseSync): void {
 
   db.prepare(
     'INSERT INTO sessions (name, day_of_week, start_time, end_time, rotation_length, groups, is_sample) VALUES (?, ?, ?, ?, ?, ?, 1)',
-  ).run('Monday Team Practice', 1, '16:00', '18:30', 15, JSON.stringify(groupIds))
+  ).run('Monday Team Practice', 1, '16:00', '18:30', 15, JSON.stringify(classIds))
 }
 
 export function exampleGymRoutes(db: DatabaseSync): Router {

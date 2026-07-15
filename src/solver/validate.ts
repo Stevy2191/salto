@@ -23,15 +23,15 @@ export function hardConstraintViolations(
     if (count > capacity) violations.push(`event ${eventId} over capacity: ${key}`)
   }
 
-  // 2. Group in one place per slot.
-  const groupAt = new Map<string, number>()
+  // 2. Class in one place per slot.
+  const classAt = new Map<string, number>()
   for (const a of assignments) {
-    const key = `${a.groupId}:${a.slotIndex}`
-    const prev = groupAt.get(key)
+    const key = `${a.classId}:${a.slotIndex}`
+    const prev = classAt.get(key)
     if (prev !== undefined && prev !== a.eventId) {
-      violations.push(`group ${a.groupId} in two places at slot ${a.slotIndex}`)
+      violations.push(`class ${a.classId} in two places at slot ${a.slotIndex}`)
     }
-    groupAt.set(key, a.eventId)
+    classAt.set(key, a.eventId)
   }
 
   // 3. Coach in one place per slot.
@@ -47,15 +47,15 @@ export function hardConstraintViolations(
   }
 
   // 4. Required events fulfilled with full durations.
-  for (const group of input.groups) {
-    for (const req of group.requiredEvents) {
+  for (const cls of input.classes) {
+    for (const req of cls.requiredEvents) {
       const needed = req.duration / input.rotationLength
       const got = assignments.filter(
-        (a) => a.groupId === group.id && a.eventId === req.eventId,
+        (a) => a.classId === cls.id && a.eventId === req.eventId,
       ).length
       if (got < needed) {
         violations.push(
-          `group ${group.id} got ${got}/${needed} slots on event ${req.eventId}`,
+          `class ${cls.id} got ${got}/${needed} slots on event ${req.eventId}`,
         )
       }
     }

@@ -11,7 +11,7 @@ const arbScenario = fc
   .record({
     eventCount: fc.integer({ min: 2, max: 5 }),
     capacities: fc.array(fc.integer({ min: 1, max: 2 }), { minLength: 5, maxLength: 5 }),
-    groupCount: fc.integer({ min: 1, max: 5 }),
+    classCount: fc.integer({ min: 1, max: 5 }),
     requirements: fc.array(
       fc.array(
         fc.record({
@@ -24,7 +24,7 @@ const arbScenario = fc
     ),
     coachCount: fc.integer({ min: 1, max: 3 }),
     slotCount: fc.integer({ min: 4, max: 12 }),
-    coachMode: fc.constantFrom('group' as const, 'event' as const),
+    coachMode: fc.constantFrom('class' as const, 'event' as const),
     seed: fc.integer({ min: 0, max: 2 ** 31 - 1 }),
     repairSeed: fc.integer({ min: 0, max: 2 ** 31 - 1 }),
     downEventIndex: fc.nat({ max: 4 }),
@@ -43,11 +43,11 @@ const arbScenario = fc
       name: `Coach ${c + 1}`,
       specialties: events.map((e) => e.id),
     }))
-    const groups = Array.from({ length: raw.groupCount }, (_, g) => {
+    const classes = Array.from({ length: raw.classCount }, (_, g) => {
       const seen = new Set<number>()
       return {
         id: g + 1,
-        name: `Group ${g + 1}`,
+        name: `Class ${g + 1}`,
         priority: g,
         requiredEvents: raw.requirements[g]!
           .map((r) => ({
@@ -60,7 +60,7 @@ const arbScenario = fc
     })
     const base: SolverInput = {
       events,
-      groups,
+      classes,
       coaches,
       slotCount: raw.slotCount,
       rotationLength: 15,
@@ -107,7 +107,7 @@ describe('repair properties', () => {
           ...base,
           events: base.events.map((e) => (down.has(e.id) ? { ...e, active: false } : e)),
           coaches: base.coaches.filter((c) => !absent.has(c.id)),
-          groups: base.groups.map((g) => ({
+          classes: base.classes.map((g) => ({
             ...g,
             requiredEvents: g.requiredEvents.filter((r) => !down.has(r.eventId)),
           })),

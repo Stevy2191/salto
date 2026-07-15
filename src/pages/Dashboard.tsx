@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import type { Coach, Group, GymEvent, Session } from '../../shared/types.ts'
+import type { Coach, GymClass, GymEvent, Session } from '../../shared/types.ts'
 import { DAY_NAMES, apiDelete, apiGet, apiPost } from '../lib/api.ts'
 import { useLoad } from '../lib/useLoad.ts'
 import { Button, Card, EmptyNote, ErrorNote, PageHeader } from '../components/ui.tsx'
@@ -10,23 +10,23 @@ import { SETUP_STEPS } from './SetupWizard.tsx'
 interface Overview {
   events: GymEvent[]
   coaches: Coach[]
-  groups: Group[]
+  classes: GymClass[]
   sessions: Session[]
   exampleLoaded: boolean
 }
 
 async function loadOverview(): Promise<Overview> {
-  const [events, coaches, groups, sessions, example] = await Promise.all([
+  const [events, coaches, classes, sessions, example] = await Promise.all([
     apiGet<{ events: GymEvent[] }>('/api/events'),
     apiGet<{ coaches: Coach[] }>('/api/coaches'),
-    apiGet<{ groups: Group[] }>('/api/groups'),
+    apiGet<{ classes: GymClass[] }>('/api/classes'),
     apiGet<{ sessions: Session[] }>('/api/sessions'),
     apiGet<{ loaded: boolean }>('/api/example-gym'),
   ])
   return {
     events: events.events,
     coaches: coaches.coaches,
-    groups: groups.groups,
+    classes: classes.classes,
     sessions: sessions.sessions,
     exampleLoaded: example.loaded,
   }
@@ -35,7 +35,7 @@ async function loadOverview(): Promise<Overview> {
 function GuidedSetup({ overview, onLoadExample }: { overview: Overview; onLoadExample: () => void }) {
   const done = [
     overview.events.length > 0,
-    overview.groups.length > 0,
+    overview.classes.length > 0,
     overview.coaches.length > 0,
     overview.sessions.length > 0,
   ]
@@ -127,7 +127,7 @@ export function Dashboard() {
 
   const isEmpty =
     data.events.length === 0 &&
-    data.groups.length === 0 &&
+    data.classes.length === 0 &&
     data.coaches.length === 0 &&
     data.sessions.length === 0
 
@@ -142,7 +142,7 @@ export function Dashboard() {
 
   const setupIncomplete =
     data.events.length === 0 ||
-    data.groups.length === 0 ||
+    data.classes.length === 0 ||
     data.coaches.length === 0 ||
     data.sessions.length === 0
 
@@ -176,7 +176,7 @@ export function Dashboard() {
                     <span className="font-medium text-slate-900">{sessionLabel(session)}</span>
                     <p className="text-sm text-slate-500">
                       {DAY_NAMES[session.dayOfWeek]} {session.startTime}–{session.endTime} ·{' '}
-                      {session.groups.length} group{session.groups.length === 1 ? '' : 's'}
+                      {session.classes.length} class{session.classes.length === 1 ? '' : 'es'}
                     </p>
                   </div>
                   <span className="text-sm font-medium text-indigo-600">Open schedule →</span>

@@ -12,7 +12,7 @@ export interface SolverEvent {
   active: boolean
 }
 
-export interface SolverGroup {
+export interface SolverClass {
   id: number
   name: string
   priority: number
@@ -28,7 +28,7 @@ export interface SolverCoach {
 
 export interface SolverInput {
   events: SolverEvent[]
-  groups: SolverGroup[]
+  classes: SolverClass[]
   coaches: SolverCoach[]
   /** Number of rotation slots in the session window. */
   slotCount: number

@@ -14,9 +14,9 @@ const event = (id: number, capacity = 1, active = true): GymEvent => ({
 const a = (
   slotIndex: number,
   eventId: number,
-  groupId: number,
+  classId: number,
   coachId: number | null = null,
-): Assignment => ({ slotIndex, eventId, groupId, coachId })
+): Assignment => ({ slotIndex, eventId, classId, coachId })
 
 describe('findConflicts', () => {
   it('returns empty for a clean schedule', () => {
@@ -27,15 +27,15 @@ describe('findConflicts', () => {
     expect(conflicts.size).toBe(0)
   })
 
-  it('flags a group booked on two events in the same slot', () => {
+  it('flags a class booked on two events in the same slot', () => {
     const one = a(0, 1, 1)
     const two = a(0, 2, 1)
     const conflicts = findConflicts([one, two], [event(1), event(2)])
-    expect(conflicts.get(assignmentKey(one))).toContain('group-double-booked')
-    expect(conflicts.get(assignmentKey(two))).toContain('group-double-booked')
+    expect(conflicts.get(assignmentKey(one))).toContain('class-double-booked')
+    expect(conflicts.get(assignmentKey(two))).toContain('class-double-booked')
   })
 
-  it('does not flag the same group in the same slot across different slots', () => {
+  it('does not flag the same class in the same slot across different slots', () => {
     const conflicts = findConflicts([a(0, 1, 1), a(1, 2, 1)], [event(1), event(2)])
     expect(conflicts.size).toBe(0)
   })
@@ -48,7 +48,7 @@ describe('findConflicts', () => {
     expect(conflicts.get(assignmentKey(two))).toContain('coach-double-booked')
   })
 
-  it('allows one coach with two groups at the same event', () => {
+  it('allows one coach with two classes at the same event', () => {
     const conflicts = findConflicts(
       [a(0, 1, 1, 7), a(0, 1, 2, 7)],
       [event(1, 2)],
@@ -97,6 +97,6 @@ describe('findConflicts', () => {
     const reasons = conflicts.get(assignmentKey(one))!
     expect(reasons).toContain('over-capacity')
     expect(reasons).toContain('event-inactive')
-    expect(reasons).toContain('group-double-booked')
+    expect(reasons).toContain('class-double-booked')
   })
 })

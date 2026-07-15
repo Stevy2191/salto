@@ -1,8 +1,14 @@
 // Entity types shared between the server and the frontend.
+//
+// Naming note: the product term for a training group is "class" (renamed
+// from "group" after user testing). SQLite storage keeps the original
+// `groups` table / `group_id` column names — the server's row mappers
+// translate — so deployed databases never needed a rename migration.
 
 export interface GymEvent {
   id: number
   name: string
+  /** How many classes can use this event simultaneously. */
   capacity: number
   active: boolean
   /** Hex color (#RRGGBB) shown wherever the event appears. */
@@ -26,13 +32,13 @@ export interface RequiredEvent {
   duration: number
 }
 
-export interface Group {
+export interface GymClass {
   id: number
   name: string
   /** Higher priority wins when conflicts arise. */
   priority: number
   requiredEvents: RequiredEvent[]
-  /** Coach ids who travel with this group. */
+  /** Coach ids who travel with this class. */
   assignedCoaches: number[]
   isSample: boolean
 }
@@ -48,8 +54,8 @@ export interface Session {
   endTime: string
   /** Slot granularity in minutes. */
   rotationLength: number
-  /** Group ids attending this session. */
-  groups: number[]
+  /** Class ids attending this session. */
+  classes: number[]
   /** Coaches marked absent for this session only (day-of change). */
   absentCoaches: number[]
   /** Events marked out for this session only (day-of change). */
@@ -57,20 +63,20 @@ export interface Session {
   isSample: boolean
 }
 
-/** One cell of a schedule: a group at an event during one time slot. */
+/** One cell of a schedule: a class at an event during one time slot. */
 export interface Assignment {
   slotIndex: number
   eventId: number
-  groupId: number
+  classId: number
   coachId: number | null
   /** Locked cells survive regeneration; the solver plans around them. */
   locked?: boolean
 }
 
-/** Whether coaches travel with their group or own an event. */
-export type CoachMode = 'group' | 'event'
+/** Whether coaches travel with their class or own an event. */
+export type CoachMode = 'class' | 'event'
 
-/** "Avoid `beforeEventId` immediately before `afterEventId` for a group." */
+/** "Avoid `beforeEventId` immediately before `afterEventId` for a class." */
 export interface AdjacencyPenalty {
   beforeEventId: number
   afterEventId: number

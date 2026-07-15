@@ -39,10 +39,10 @@ test('first run: admin setup, then the setup wizard through to the grid', async 
   await expect(page.getByRole('button', { name: /next/i })).toBeEnabled()
   await page.getByRole('button', { name: /next/i }).click()
 
-  // Step 2 — groups, with a required event (Vault, 30 min default).
-  await expect(page).toHaveURL(/\/guide\/groups$/)
+  // Step 2 — classes, with a required event (Vault, 30 min default).
+  await expect(page).toHaveURL(/\/guide\/classes$/)
   await expect(page.getByText('Step 2 of 4')).toBeVisible()
-  await page.getByLabel('Group name').fill('Level 3 Girls')
+  await page.getByLabel('Class name').fill('Level 3 Girls')
   await page.getByRole('button', { name: '+ Add event' }).click()
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.getByRole('button', { name: /next/i })).toBeEnabled()
@@ -51,7 +51,7 @@ test('first run: admin setup, then the setup wizard through to the grid', async 
   // Step 3 — coaches. Exercise Back and return.
   await expect(page.getByText('Step 3 of 4')).toBeVisible()
   await page.getByRole('button', { name: /back/i }).click()
-  await expect(page).toHaveURL(/\/guide\/groups$/)
+  await expect(page).toHaveURL(/\/guide\/classes$/)
   await expect(page.getByText('Level 3 Girls', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: /next/i }).click()
   await page.getByLabel('Coach name').fill('Dana Marsh')
@@ -59,7 +59,7 @@ test('first run: admin setup, then the setup wizard through to the grid', async 
   await expect(page.getByRole('button', { name: /next/i })).toBeEnabled()
   await page.getByRole('button', { name: /next/i }).click()
 
-  // Step 4 — first session. Groups come pre-selected; Finish is gated.
+  // Step 4 — first session. Classes come pre-selected; Finish is gated.
   await expect(page).toHaveURL(/\/guide\/session$/)
   await expect(page.getByText('Step 4 of 4')).toBeVisible()
   await expect(page.getByRole('button', { name: /finish/i })).toBeDisabled()
@@ -87,8 +87,8 @@ test('first run: admin setup, then the setup wizard through to the grid', async 
 test('generate, mark the coach absent, repair with a summary', async ({ page }) => {
   await login(page)
 
-  // Give the group its coach so generated cells are staffed.
-  await page.goto('/groups')
+  // Give the class its coach so generated cells are staffed.
+  await page.goto('/classes')
   await page.getByRole('button', { name: 'Edit' }).click()
   const editRow = page.getByRole('listitem')
   await editRow.getByRole('button', { name: 'Dana Marsh' }).click()
@@ -111,7 +111,7 @@ test('generate, mark the coach absent, repair with a summary', async ({ page }) 
   await expect(page.getByText(/currently has no coach/)).toBeVisible()
 })
 
-test('print view renders the block layout and group strips', async ({ page }) => {
+test('print view renders the block layout and class strips', async ({ page }) => {
   await login(page)
   await page.goto('/sessions/1/print')
   await expect(page.getByRole('heading', { name: 'Monday Practice' })).toBeVisible()
