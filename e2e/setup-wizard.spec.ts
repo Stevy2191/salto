@@ -44,6 +44,11 @@ test('first run: admin setup, then the setup wizard through to the grid', async 
   await expect(page.getByText('Step 2 of 4')).toBeVisible()
   await page.getByLabel('Class name').fill('Level 3 Girls')
   await page.getByRole('button', { name: '+ Add event' }).click()
+  // The fit summary tracks the draft requirements live.
+  await expect(page.getByText('Total required: 30 min')).toBeVisible()
+  await page.getByLabel('duration in minutes').fill('45')
+  await expect(page.getByText('Total required: 45 min')).toBeVisible()
+  await page.getByLabel('duration in minutes').fill('30')
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.getByRole('button', { name: /next/i })).toBeEnabled()
   await page.getByRole('button', { name: /next/i }).click()

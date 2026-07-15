@@ -58,8 +58,11 @@ storage keeps the original `groups` table name behind the server's mappers.
 - `level` / priority — higher-priority classes get first pick when conflicts
   arise (e.g., optionals over recreational)
 - `requiredEvents` — the events this class must hit in a session, each with a
-  **duration** (durations vary: e.g., 30 min beam, 20 min vault, 15 min
-  conditioning)
+  **duration**, freely editable per class (durations vary: e.g., Silver does
+  20 min vault while Gold does 35). While editing, the form shows the total
+  required time against each attending session's length — and flags
+  durations that don't divide into the session's rotation length — so a
+  schedule that can't fit is visible before generating.
 - `assignedCoaches` — coaches who travel with this class (some gyms rotate
   coaches by event instead; support both via a setting)
 

@@ -153,6 +153,7 @@ export function SetupWizard() {
               initial={{ name: '', priority: 0, requiredEvents: [], assignedCoaches: [] }}
               events={events}
               coaches={coaches}
+              sessions={sessions}
               onSave={async (values) => {
                 await apiPost('/api/classes', values)
                 await classesLoad.reload()
