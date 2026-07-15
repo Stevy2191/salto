@@ -7,7 +7,9 @@ import type { Page } from '@playwright/test'
 test.describe.configure({ mode: 'serial' })
 
 /** Row height in the grid, in px — must match src/pages/schedule/grid.ts. */
-const ROW_H = 20
+const ROW_H = 28
+
+type Loc = ReturnType<Page['locator']>
 
 async function login(page: Page) {
   await page.goto('/login')
@@ -18,31 +20,70 @@ async function login(page: Page) {
 }
 
 /**
- * Drag inside a class's lane from one row offset to another, in rows from
- * the top of the class's window. This is the product's primary gesture.
- *
- * The write is awaited on the network, not on the "Saved" label: that label
- * reads "Saved" before anything happens, so waiting for it would pass
- * instantly and race the assertion that follows.
+ * The grid writes on pointer-release. Await the actual PUT, not the "Saved"
+ * label: it reads "Saved" before anything happens, so waiting on it passes
+ * instantly and races whatever is asserted next.
  */
-async function dragRows(page: Page, placement: ReturnType<Page['locator']>, from: number, to: number) {
-  const box = (await placement.boundingBox())!
-  const x = box.x + box.width / 2
-  // Press in the middle of the row, as a hand does. The top and bottom few
-  // pixels of a block are its resize handles, so pressing right on a row
-  // boundary would drag the edge instead of painting.
-  const y = (row: number) => box.y + row * ROW_H + ROW_H / 2
-  const saved = page.waitForResponse(
+function saveOf(page: Page) {
+  return page.waitForResponse(
     (r) => r.request().method() === 'PUT' && r.url().includes('/schedule'),
   )
-  await page.mouse.move(x, y(from))
+}
+
+/** A pointer drag in a straight line, in several steps like a real hand. */
+async function drag(page: Page, from: { x: number; y: number }, to: { x: number; y: number }) {
+  await page.mouse.move(from.x, from.y)
   await page.mouse.down()
-  // Several steps so the drag really tracks, as a hand would.
-  const steps = Math.max(Math.abs(to - from), 1)
+  const steps = 8
   for (let i = 1; i <= steps; i++) {
-    await page.mouse.move(x, y(from + ((to - from) * i) / steps))
+    await page.mouse.move(
+      from.x + ((to.x - from.x) * i) / steps,
+      from.y + ((to.y - from.y) * i) / steps,
+    )
   }
   await page.mouse.up()
+}
+
+/**
+ * Paint or erase across a class's rows, counted from the top of its window.
+ * Presses mid-row, as a hand does: the top and bottom few pixels of a block
+ * are its resize handles.
+ */
+async function dragRows(page: Page, placement: Loc, from: number, to: number) {
+  const box = (await placement.boundingBox())!
+  const x = box.x + box.width / 2
+  const y = (row: number) => box.y + row * ROW_H + ROW_H / 2
+  const saved = saveOf(page)
+  await drag(page, { x, y: y(from) }, { x, y: y(to) })
+  await saved
+}
+
+/** Grab a block by its body and move it down (or up) by whole rows. */
+async function moveBlockRows(page: Page, block: Loc, rows: number, { expectSave = true } = {}) {
+  await block.scrollIntoViewIfNeeded()
+  const b = (await block.boundingBox())!
+  const x = b.x + b.width / 2
+  const y = b.y + b.height / 2 // the body, clear of both edge handles
+  const saved = expectSave ? saveOf(page) : null
+  await drag(page, { x, y }, { x, y: y + rows * ROW_H })
+  if (saved) await saved
+}
+
+/** Wipe a class's window so a test can paint exactly what it needs. */
+async function clearLane(page: Page, placement: Loc) {
+  await page.getByRole('button', { name: 'erase' }).click()
+  await dragRows(page, placement, 0, 23)
+  await expect(placement.locator('[data-testid^="block-"]')).toHaveCount(0)
+}
+
+/** Drag a block's bottom edge by whole rows. */
+async function resizeBlockRows(page: Page, block: Loc, rows: number) {
+  await block.scrollIntoViewIfNeeded()
+  const b = (await block.boundingBox())!
+  const x = b.x + b.width / 2
+  const y = b.y + b.height - 3 // inside the bottom resize handle
+  const saved = saveOf(page)
+  await drag(page, { x, y }, { x, y: y + rows * ROW_H })
   await saved
 }
 
@@ -200,48 +241,147 @@ test('drag to paint an event across several 5-minute blocks', async ({ page }) =
 
   // Level 3 Girls runs the whole session in column 1.
   const lane = page.locator('[data-testid^="placement-"]').first()
-  await page.getByRole('button', { name: 'paint Beam' }).click()
+  await clearLane(page, lane)
 
   // Drag six rows: 30 minutes of Beam, from 16:10.
+  await page.getByRole('button', { name: 'paint Beam' }).click()
   await dragRows(page, lane, 2, 8)
+
   const beam = lane.locator('[data-testid^="block-"]').first()
-  await expect(beam).toBeVisible()
   await expect(beam).toContainText('Beam')
-  // Six 5-minute rows tall, exactly what was dragged.
   expect(Math.round((await beam.boundingBox())!.height)).toBe(6 * ROW_H)
 
   // It survives a reload — the drag really wrote.
   await page.reload()
-  await expect(page.locator('[data-testid^="block-"]').first()).toContainText('Beam')
+  await expect(lane.locator('[data-testid^="block-"]').first()).toContainText('Beam')
 })
 
-test('painting over an existing block overwrites the span', async ({ page }) => {
+test('painting across an existing block overwrites what it crosses', async ({ page }) => {
   await login(page)
   await page.goto('/sessions/1/schedule')
   const lane = page.locator('[data-testid^="placement-"]').first()
+  await clearLane(page, lane)
+  await page.getByRole('button', { name: 'paint Beam' }).click()
+  await dragRows(page, lane, 2, 8)
 
-  // Vault straight over the middle of the Beam block painted above.
+  // Start on empty grid below and drag up through the Beam. Pressing the
+  // block itself would move it — that is the point of the distinction — so
+  // overwriting is done by painting across from open time.
   await page.getByRole('button', { name: 'paint Vault' }).click()
-  await dragRows(page, lane, 4, 6)
+  await dragRows(page, lane, 10, 6)
 
   await page.reload()
   const blocks = lane.locator('[data-testid^="block-"]')
-  // Beam split around the new Vault: Beam, Vault, Beam.
-  await expect(blocks).toHaveCount(3)
+  await expect(blocks).toHaveCount(2)
+  // Beam was trimmed back to where Vault begins; Vault took the rest.
   await expect(blocks.nth(0)).toContainText('Beam')
   await expect(blocks.nth(1)).toContainText('Vault')
-  await expect(blocks.nth(2)).toContainText('Beam')
+  expect(Math.round((await blocks.nth(0).boundingBox())!.height)).toBe(4 * ROW_H)
+})
+
+test('a block moves by its body, keeping its duration and snapping to rows', async ({ page }) => {
+  await login(page)
+  await page.goto('/sessions/1/schedule')
+  const lane = page.locator('[data-testid^="placement-"]').first()
+  await clearLane(page, lane)
+  await page.getByRole('button', { name: 'paint Beam' }).click()
+  await dragRows(page, lane, 2, 6) // 16:10–16:30
+
+  const beam = lane.locator('[data-testid^="block-"]').first()
+  const before = (await beam.boundingBox())!
+  await moveBlockRows(page, beam, 6)
+
+  await page.reload()
+  const moved = (await lane.locator('[data-testid^="block-"]').first().boundingBox())!
+  // Same duration, six rows later, landed on a clean row boundary.
+  expect(Math.round(moved.height)).toBe(Math.round(before.height))
+  const lanePos = (await lane.boundingBox())!
+  expect(Math.round((moved.y - lanePos.y) / ROW_H)).toBe(8)
+})
+
+test('a move onto a sibling is refused, not silently eaten', async ({ page }) => {
+  await login(page)
+  await page.goto('/sessions/1/schedule')
+  const lane = page.locator('[data-testid^="placement-"]').first()
+  await clearLane(page, lane)
+  await page.getByRole('button', { name: 'paint Beam' }).click()
+  await dragRows(page, lane, 0, 4) // 16:00–16:20
+  await page.getByRole('button', { name: 'paint Vault' }).click()
+  await dragRows(page, lane, 4, 8) // 16:20–16:40
+
+  // Drag Vault up onto Beam. Nothing is written and nothing is destroyed.
+  const vault = lane.locator('[data-testid^="block-"]').nth(1)
+  await moveBlockRows(page, vault, -2, { expectSave: false })
+
+  await page.reload()
+  const blocks = lane.locator('[data-testid^="block-"]')
+  await expect(blocks).toHaveCount(2)
+  await expect(blocks.nth(0)).toContainText('Beam')
+  await expect(blocks.nth(1)).toContainText('Vault')
+})
+
+test('dragging a block edge resizes it, snapping to 5 minutes', async ({ page }) => {
+  await login(page)
+  await page.goto('/sessions/1/schedule')
+  const lane = page.locator('[data-testid^="placement-"]').first()
+  await clearLane(page, lane)
+  await page.getByRole('button', { name: 'paint Beam' }).click()
+  await dragRows(page, lane, 2, 6) // 16:10–16:30
+
+  const beam = lane.locator('[data-testid^="block-"]').first()
+  const before = (await beam.boundingBox())!
+  await resizeBlockRows(page, beam, 3)
+
+  await page.reload()
+  const after = (await lane.locator('[data-testid^="block-"]').first().boundingBox())!
+  expect(Math.round(after.height)).toBe(Math.round(before.height) + 3 * ROW_H)
+  // The top edge did not move — a resize is not a move.
+  expect(Math.round(after.y)).toBe(Math.round(before.y))
+})
+
+test('a resize stops at the neighbouring block instead of eating it', async ({ page }) => {
+  await login(page)
+  await page.goto('/sessions/1/schedule')
+  const lane = page.locator('[data-testid^="placement-"]').first()
+  await clearLane(page, lane)
+  await page.getByRole('button', { name: 'paint Beam' }).click()
+  await dragRows(page, lane, 0, 4) // 16:00–16:20
+  await page.getByRole('button', { name: 'paint Vault' }).click()
+  await dragRows(page, lane, 8, 12) // 16:40–17:00
+
+  const blocks = lane.locator('[data-testid^="block-"]')
+  const neighbourTop = (await blocks.nth(1).boundingBox())!.y
+  await resizeBlockRows(page, blocks.first(), 20)
+
+  await page.reload()
+  await expect(lane.locator('[data-testid^="block-"]')).toHaveCount(2)
+  const grown = (await lane.locator('[data-testid^="block-"]').first().boundingBox())!
+  expect(Math.round(grown.y + grown.height)).toBe(Math.round(neighbourTop))
+})
+
+test('a block can be deleted from the block itself', async ({ page }) => {
+  await login(page)
+  await page.goto('/sessions/1/schedule')
+  const lane = page.locator('[data-testid^="placement-"]').first()
+  await expect(lane.locator('[data-testid^="block-"]')).toHaveCount(2)
+
+  const saved = saveOf(page)
+  await lane.locator('[data-testid^="block-"]').last().hover()
+  await lane.getByRole('button', { name: /^delete / }).last().click()
+  await saved
+
+  await page.reload()
+  await expect(lane.locator('[data-testid^="block-"]')).toHaveCount(1)
 })
 
 test('erase clears a span', async ({ page }) => {
   await login(page)
   await page.goto('/sessions/1/schedule')
   const lane = page.locator('[data-testid^="placement-"]').first()
-  // The Beam/Vault/Beam painted above all live in rows 2–8.
-  await expect(lane.locator('[data-testid^="block-"]')).toHaveCount(3)
+  await expect(lane.locator('[data-testid^="block-"]')).toHaveCount(1)
 
   await page.getByRole('button', { name: 'erase' }).click()
-  await dragRows(page, lane, 2, 8)
+  await dragRows(page, lane, 0, 23)
 
   await page.reload()
   await expect(lane.locator('[data-testid^="block-"]')).toHaveCount(0)

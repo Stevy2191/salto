@@ -92,9 +92,33 @@ export function eraseSpan(
 }
 
 /**
- * Drag a block's edge. The block keeps its other edge; growing eats whatever
- * it grows into, shrinking just frees the time. Never escapes the window,
- * and never shrinks below one row.
+ * The room a block has to grow into: the gap between its nearest neighbours,
+ * bounded by the class's own window. Resizing clamps to this rather than
+ * eating a sibling — growing over the block next door would destroy work the
+ * user did not point at.
+ */
+export function blockBounds(
+  schedule: Schedule,
+  placementId: number,
+  blockId: number,
+): { min: number; max: number } | null {
+  const placement = schedule.placements.find((p) => p.id === placementId)
+  const block = placement?.blocks.find((b) => b.id === blockId)
+  if (!placement || !block) return null
+  const siblings = placement.blocks.filter((b) => b.id !== blockId)
+  const min = siblings
+    .filter((b) => b.endMin <= block.startMin)
+    .reduce((lo, b) => Math.max(lo, b.endMin), placement.startMin)
+  const max = siblings
+    .filter((b) => b.startMin >= block.endMin)
+    .reduce((hi, b) => Math.min(hi, b.startMin), placement.endMin)
+  return { min, max }
+}
+
+/**
+ * Drag a block's edge. The block keeps its other edge and clamps to the gap
+ * it lives in, so it can never shrink below one row, escape the class's
+ * window, or overwrite a neighbour.
  */
 export function resizeBlock(
   schedule: Schedule,
@@ -105,28 +129,92 @@ export function resizeBlock(
 ): Schedule {
   const placement = schedule.placements.find((p) => p.id === placementId)
   const block = placement?.blocks.find((b) => b.id === blockId)
-  if (!placement || !block) return schedule
+  const bounds = blockBounds(schedule, placementId, blockId)
+  if (!placement || !block || !bounds) return schedule
 
   const snapped = snap(toMin)
-  let startMin = block.startMin
-  let endMin = block.endMin
-  if (edge === 'start') {
-    startMin = Math.min(Math.max(snapped, placement.startMin), block.endMin - SLOT_MINUTES)
-  } else {
-    endMin = Math.max(Math.min(snapped, placement.endMin), block.startMin + SLOT_MINUTES)
-  }
+  const startMin =
+    edge === 'start'
+      ? Math.min(Math.max(snapped, bounds.min), block.endMin - SLOT_MINUTES)
+      : block.startMin
+  const endMin =
+    edge === 'end'
+      ? Math.max(Math.min(snapped, bounds.max), block.startMin + SLOT_MINUTES)
+      : block.endMin
   if (startMin === block.startMin && endMin === block.endMin) return schedule
 
-  // Carve the new footprint out of the neighbours, then drop the block in.
-  const withoutSelf = mapPlacement(schedule, placementId, (p) => ({
+  return mapPlacement(schedule, placementId, (p) => ({
     ...p,
-    blocks: p.blocks.filter((b) => b.id !== blockId),
+    blocks: sortBlocks(p.blocks.map((b) => (b.id === blockId ? { ...b, startMin, endMin } : b))),
   }))
-  const cleared = clearSpan(withoutSelf, placementId, startMin, endMin)
-  return mapPlacement(cleared, placementId, (p) => ({
-    ...p,
-    blocks: sortBlocks([...p.blocks, { ...block, startMin, endMin }]),
-  }))
+}
+
+/** Where a block would land if moved, clamped to the target class's window. */
+export function moveTarget(
+  schedule: Schedule,
+  fromPlacementId: number,
+  blockId: number,
+  toPlacementId: number,
+  newStartMin: number,
+): { startMin: number; endMin: number; fits: boolean } | null {
+  const from = schedule.placements.find((p) => p.id === fromPlacementId)
+  const to = schedule.placements.find((p) => p.id === toPlacementId)
+  const block = from?.blocks.find((b) => b.id === blockId)
+  if (!from || !to || !block) return null
+
+  const duration = block.endMin - block.startMin
+  if (duration > to.endMin - to.startMin) return null // cannot fit at all
+  const startMin = Math.min(Math.max(snap(newStartMin), to.startMin), to.endMin - duration)
+  const endMin = startMin + duration
+  const fits = !to.blocks.some(
+    (b) => b.id !== blockId && overlaps(b.startMin, b.endMin, startMin, endMin),
+  )
+  return { startMin, endMin, fits }
+}
+
+/**
+ * Move a whole block to a new time, and optionally another class, keeping its
+ * duration. Refused (null) when the landing spot is taken — a move that ate
+ * the block it landed on would silently destroy work.
+ */
+export function moveBlock(
+  schedule: Schedule,
+  fromPlacementId: number,
+  blockId: number,
+  toPlacementId: number,
+  newStartMin: number,
+): Schedule | null {
+  const target = moveTarget(schedule, fromPlacementId, blockId, toPlacementId, newStartMin)
+  if (!target || !target.fits) return null
+  const block = schedule.placements
+    .find((p) => p.id === fromPlacementId)!
+    .blocks.find((b) => b.id === blockId)!
+  if (
+    fromPlacementId === toPlacementId &&
+    target.startMin === block.startMin &&
+    target.endMin === block.endMin
+  ) {
+    return null // nothing moved
+  }
+
+  const moved = { ...block, startMin: target.startMin, endMin: target.endMin }
+  return {
+    placements: schedule.placements.map((p) => {
+      if (p.id === fromPlacementId && p.id === toPlacementId) {
+        return {
+          ...p,
+          blocks: sortBlocks(p.blocks.map((b) => (b.id === blockId ? moved : b))),
+        }
+      }
+      if (p.id === fromPlacementId) {
+        return { ...p, blocks: p.blocks.filter((b) => b.id !== blockId) }
+      }
+      if (p.id === toPlacementId) {
+        return { ...p, blocks: sortBlocks([...p.blocks, moved]) }
+      }
+      return p
+    }),
+  }
 }
 
 export function removeBlock(schedule: Schedule, placementId: number, blockId: number): Schedule {

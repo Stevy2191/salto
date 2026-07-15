@@ -125,19 +125,45 @@ first — no required events, no priorities, no setup.
 
 ### The grid
 Classes across the top, time down the left — the same orientation as the
-Excel export and the gyms' own hand-made sheets. Rows are 5 minutes. Each
-column is a lane holding one or more class placements stacked in time; the
-class header (name + its time range) sits at the top of its block within the
-column. Outside a class's window the column is blank.
+Excel export and the gyms' own hand-made sheets. Rows are 5 minutes and are
+drawn at a **real, tappable height**: a single 5-minute slot is a normal
+thing to paint, so it has to be a target you can hit. A 4-hour session is
+~48 rows and scrolls vertically; rows are never compressed to fit a screen.
+A light gridline marks every row, a stronger one every half hour and the
+strongest on the hour, and the sticky time column labels every row.
 
-### Painting
-- Pick an event from the palette, then click-drag down the 5-minute rows
-  inside a class's window to paint that event across the span. The drag
-  defines the length; releasing commits it. Everything snaps to 5 minutes.
-- Painting over existing blocks overwrites the painted span.
-- Drag the edge of a block to lengthen or shorten it.
-- There is a fast way to erase a span.
-- It must be fluid: minimal clicks, no keyboard needed, mouse or touch.
+Each column is a lane holding one or more class placements stacked in time;
+the class header (name + its time range) sits at the top of its block within
+the column. Outside a class's window the column is blank.
+
+### Editing
+Three gestures, kept apart by **where the press lands**, so they never fight:
+
+- **Empty rows inside a class → paint.** Pick an event from the palette and
+  drag down the rows; the drag defines the length, the release commits.
+  Painting *across* an existing block overwrites the span it crosses,
+  trimming or splitting it.
+- **A block's body → move it**, whole and at its original duration, to a new
+  time and/or another class where that is valid.
+- **A block's top/bottom edge → resize** that edge, with a resize cursor and
+  a grip that appears on hover.
+
+Everything snaps to 5 minutes. A live tooltip follows the pointer saying what
+the drag will do ("Beam 16:05–16:20") and the target span is highlighted;
+when a move would collide the tooltip and the target go red and the drop is
+refused. Blocks stay inside the class's window and never overlap a sibling:
+a resize clamps at its neighbour and a colliding move is refused, rather than
+quietly eating work the user never pointed at.
+
+Erasing is a palette tool (drag to clear a span) and each block also carries
+a delete affordance, so removing something never needs a mode change.
+
+Because a press on a block moves it, painting over a *fully* painted class is
+done by dragging in from open time, erasing first, or deleting a block. That
+is the cost of making move a first-class gesture, and it is the right trade:
+moving and resizing are what a built schedule needs most.
+
+It must be fluid: minimal clicks, no keyboard needed, mouse or touch.
 
 ### Generation (optional)
 "Generate" fills events **within each class's own window**, respecting that

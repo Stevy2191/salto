@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest'
 import type { EventBlock, Placement, Schedule } from '../../shared/types.ts'
 import {
   addPlacement,
+  blockBounds,
   columnFree,
   eraseSpan,
+  moveBlock,
   movePlacement,
+  moveTarget,
   paintSpan,
   removeColumn,
   removePlacement,
@@ -168,15 +171,102 @@ describe('resizeBlock', () => {
     expect(shape(after)).toEqual([[5, T('16:20'), T('17:00')]])
   })
 
-  it('eats a neighbour it grows into', () => {
+  it('clamps at a neighbour instead of eating it', () => {
+    // Growing over the block next door would destroy work the user never
+    // pointed at, so the edge stops where the neighbour begins.
     const b1 = block(5, '16:00', '16:20')
-    const b2 = block(6, '16:20', '16:40')
+    const b2 = block(6, '16:30', '16:50')
     const s = schedule([placement(1, 1, 0, '16:00', '17:00', [b1, b2])])
-    const after = resizeBlock(s, 1, b2.id, 'start', T('16:10'))
+    const after = resizeBlock(s, 1, b2.id, 'start', T('16:05'))
     expect(shape(after)).toEqual([
-      [5, T('16:00'), T('16:10')],
-      [6, T('16:10'), T('16:40')],
+      [5, T('16:00'), T('16:20')],
+      [6, T('16:20'), T('16:50')],
     ])
+  })
+
+  it('reports the room a block has to grow into', () => {
+    const b1 = block(5, '16:00', '16:20')
+    const b2 = block(6, '16:30', '16:50')
+    const s = schedule([placement(1, 1, 0, '16:00', '17:00', [b1, b2])])
+    expect(blockBounds(s, 1, b2.id)).toEqual({ min: T('16:20'), max: T('17:00') })
+    expect(blockBounds(s, 1, b1.id)).toEqual({ min: T('16:00'), max: T('16:30') })
+  })
+})
+
+describe('moveBlock', () => {
+  it('moves a block to a new time, keeping its duration', () => {
+    const b = block(5, '16:00', '16:30')
+    const s = schedule([placement(1, 1, 0, '16:00', '17:00', [b])])
+    const after = moveBlock(s, 1, b.id, 1, T('16:20'))!
+    expect(shape(after)).toEqual([[5, T('16:20'), T('16:50')]])
+  })
+
+  it('snaps the landing to 5 minutes', () => {
+    const b = block(5, '16:00', '16:30')
+    const s = schedule([placement(1, 1, 0, '16:00', '17:00', [b])])
+    expect(shape(moveBlock(s, 1, b.id, 1, T('16:22'))!)).toEqual([[5, T('16:20'), T('16:50')]])
+  })
+
+  it('clamps to the class window rather than escaping it', () => {
+    const b = block(5, '16:00', '16:30')
+    const s = schedule([placement(1, 1, 0, '16:00', '17:00', [b])])
+    // Dragged way past the end — it stops flush with the window.
+    expect(shape(moveBlock(s, 1, b.id, 1, T('19:00'))!)).toEqual([[5, T('16:30'), T('17:00')]])
+  })
+
+  it('refuses a move that would land on a sibling', () => {
+    const b1 = block(5, '16:00', '16:30')
+    const b2 = block(6, '16:30', '17:00')
+    const s = schedule([placement(1, 1, 0, '16:00', '17:00', [b1, b2])])
+    expect(moveBlock(s, 1, b1.id, 1, T('16:20'))).toBeNull()
+  })
+
+  it('moves a block to another class, keeping its duration', () => {
+    const b = block(5, '16:00', '16:30')
+    const s = schedule([
+      placement(1, 1, 0, '16:00', '17:00', [b]),
+      placement(2, 2, 1, '16:00', '17:00'),
+    ])
+    const after = moveBlock(s, 1, b.id, 2, T('16:15'))!
+    expect(shape(after, 1)).toEqual([])
+    expect(shape(after, 2)).toEqual([[5, T('16:15'), T('16:45')]])
+  })
+
+  it('refuses a move into another class that is busy then', () => {
+    const b = block(5, '16:00', '16:30')
+    const s = schedule([
+      placement(1, 1, 0, '16:00', '17:00', [b]),
+      placement(2, 2, 1, '16:00', '17:00', [block(6, '16:00', '17:00')]),
+    ])
+    expect(moveBlock(s, 1, b.id, 2, T('16:15'))).toBeNull()
+  })
+
+  it('refuses a move into a class too short to hold it', () => {
+    const b = block(5, '16:00', '17:00')
+    const s = schedule([
+      placement(1, 1, 0, '16:00', '18:00', [b]),
+      placement(2, 2, 1, '16:00', '16:30'),
+    ])
+    expect(moveBlock(s, 1, b.id, 2, T('16:00'))).toBeNull()
+  })
+
+  it('is a no-op when nothing actually moved', () => {
+    const b = block(5, '16:00', '16:30')
+    const s = schedule([placement(1, 1, 0, '16:00', '17:00', [b])])
+    expect(moveBlock(s, 1, b.id, 1, T('16:00'))).toBeNull()
+  })
+
+  it('previews where a move would land, and whether it fits', () => {
+    const b1 = block(5, '16:00', '16:30')
+    const b2 = block(6, '16:30', '17:00')
+    const s = schedule([placement(1, 1, 0, '16:00', '17:00', [b1, b2])])
+    expect(moveTarget(s, 1, b1.id, 1, T('16:20'))).toEqual({
+      startMin: T('16:20'),
+      endMin: T('16:50'),
+      fits: false,
+    })
+    // Dragged onto its own spot: it does not collide with itself.
+    expect(moveTarget(s, 1, b1.id, 1, T('16:00'))).toMatchObject({ fits: true })
   })
 })
 

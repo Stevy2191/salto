@@ -18,7 +18,7 @@ All three phases below are implemented — **v1 is feature-complete**.
 - CRUD for events, coaches, classes, and sessions
 - A one-click (and one-click-removable) fictional example gym to explore before entering your own
 - The schedule grid: classes as columns, time as 5-minute rows. Each column is a *lane* that can run several classes back to back (LV 1 → LV 2 → VYC 2), each with its own time window inside the session — so a class is never forced to fill the whole evening
-- Build it by **dragging**: pick an event and drag down a class's rows to paint it. Painting overwrites, block edges drag to resize, and an eraser clears. No setup required
+- Build it by **dragging**: pick an event and drag down a class's empty rows to paint it, drag a block's body to move it, drag its edge to resize. A live tooltip says what the drag will do; a move that would collide is refused rather than eating your work. No setup required
 - Conflict highlighting: overlapping classes in a lane, a double-booked coach, an over-capacity event
 - Data persistence
 - Dockerfile + docker-compose.yml working end to end

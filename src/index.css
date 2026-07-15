@@ -1,5 +1,20 @@
 @import "tailwindcss";
 
+/* Gridline weights for the schedule lanes: a light rule every 5 minutes, a
+   stronger one each half hour, strongest on the hour. Themed so the grid
+   reads in both light and dark without recolouring anything in JS. */
+:root {
+  --grid-row: oklch(0.93 0.005 260);
+  --grid-half: oklch(0.86 0.01 260);
+  --grid-hour: oklch(0.72 0.02 260);
+}
+
+.dark {
+  --grid-row: oklch(0.33 0.02 260);
+  --grid-half: oklch(0.42 0.03 260);
+  --grid-hour: oklch(0.58 0.04 260);
+}
+
 /*
  * Dark mode is a deliberate choice (button in the header), not just an OS
  * setting, so `dark:` keys off a class on <html> rather than the media

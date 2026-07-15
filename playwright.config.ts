@@ -8,6 +8,11 @@ export default defineConfig({
   timeout: 60_000,
   use: {
     baseURL: 'http://localhost:3456',
+    // Tall enough to hold a 2-hour class window at 5-minute rows without
+    // scrolling: the grid is deliberately not compressed to fit, so a short
+    // viewport would put half the rows past the fold and out of reach of a
+    // pointer drag.
+    viewport: { width: 1400, height: 1200 },
   },
   webServer: {
     command: 'bash -c "rm -rf .e2e-data && npm run build && DATA_DIR=.e2e-data PORT=3456 node server/index.ts"',

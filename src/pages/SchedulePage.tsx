@@ -20,9 +20,13 @@ import {
 import { sessionLabel } from '../lib/sessions.ts'
 import {
   addPlacement,
+  blockBounds,
   eraseSpan,
+  moveBlock,
   movePlacement,
+  moveTarget,
   paintSpan,
+  removeBlock,
   removeColumn,
   removePlacement,
   resizeBlock,
@@ -34,16 +38,23 @@ import { generateSchedule } from '../solver/solver.ts'
 import { describeRepairChanges, repairSchedule } from '../solver/repair.ts'
 import { Button, Card, ChipPicker, ErrorNote, FieldGroup } from '../components/ui.tsx'
 import { CopySessionDialog } from '../components/CopySessionDialog.tsx'
-import { ROW_H, laneHeight, minToY, spanHeight, yToMin } from './schedule/grid.ts'
+import { ROW_H, laneBackground, laneHeight, minToY, spanHeight, yToMin } from './schedule/grid.ts'
 import { AddClassDialog, PlacementDialog } from './schedule/dialogs.tsx'
 
 type SaveState = 'saved' | 'saving' | 'error'
 
-/** What a drag on a lane does. Painting is the default, hence the primacy. */
+/** What a drag on empty grid does. Painting is the primary gesture. */
 type Tool = { kind: 'paint'; eventId: number } | { kind: 'erase' }
 
-interface PaintDrag {
-  kind: 'paint'
+/**
+ * The three gestures are kept apart by *where* the press lands, so they can
+ * never fight each other:
+ *   empty grid inside a class  → paint (or erase, with that tool)
+ *   the body of a block        → move it whole, duration intact
+ *   the top/bottom edge        → resize that edge
+ */
+interface StrokeDrag {
+  kind: 'paint' | 'erase'
   placementId: number
   anchorMin: number
   toMin: number
@@ -55,7 +66,23 @@ interface ResizeDrag {
   edge: 'start' | 'end'
   toMin: number
 }
-type Drag = PaintDrag | ResizeDrag
+interface MoveDrag {
+  kind: 'move'
+  placementId: number
+  blockId: number
+  /** How far into the block the user grabbed, so it doesn't jump. */
+  grabOffsetMin: number
+  /** Where the block would land: class, and its new start. */
+  toPlacementId: number
+  toStartMin: number
+}
+type Drag = StrokeDrag | ResizeDrag | MoveDrag
+
+/** Where the pointer is, for the drag tooltip. */
+interface Pointer {
+  x: number
+  y: number
+}
 
 export function SchedulePage() {
   const params = useParams()
@@ -75,6 +102,7 @@ export function SchedulePage() {
   const [columnCount, setColumnCount] = useState(0)
   const [tool, setTool] = useState<Tool | null>(null)
   const [drag, setDrag] = useState<Drag | null>(null)
+  const [pointer, setPointer] = useState<Pointer | null>(null)
   const [saveState, setSaveState] = useState<SaveState>('saved')
   const [saveError, setSaveError] = useState<string | null>(null)
   const [generationErrors, setGenerationErrors] = useState<string[] | null>(null)
@@ -142,8 +170,8 @@ export function SchedulePage() {
     }
   }
 
-  // --- Dragging. Pointer capture keeps the gesture alive outside the lane,
-  // and the live drag stays in state so the grid can preview it without a
+  // --- Dragging. The gesture lives on window so it survives leaving the
+  // lane, and the live drag stays in state so the grid previews it without a
   // round trip. Only the release writes.
   const laneRefs = useRef(new Map<number, HTMLDivElement>())
 
@@ -157,43 +185,90 @@ export function SchedulePage() {
     [session],
   )
 
+  /** Which lane the pointer is over, so a move can cross columns. */
+  const columnAtPointer = useCallback((clientX: number) => {
+    for (const [columnIndex, lane] of laneRefs.current) {
+      const rect = lane.getBoundingClientRect()
+      if (clientX >= rect.left && clientX <= rect.right) return columnIndex
+    }
+    return null
+  }, [])
+
   useEffect(() => {
     if (!drag || !schedule || !session) return
-    const move = (e: PointerEvent) => {
+
+    const onMove = (e: PointerEvent) => {
+      setPointer({ x: e.clientX, y: e.clientY })
+      if (drag.kind === 'move') {
+        // Follow the pointer across lanes: land in whichever class sits under
+        // it at that moment, if any; otherwise stay put.
+        const column = columnAtPointer(e.clientX)
+        const min = column === null ? null : minAtPointer(column, e.clientY, true)
+        if (min === null || column === null) return
+        const start = min - drag.grabOffsetMin
+        const target =
+          schedule.placements.find(
+            (p) => p.columnIndex === column && min >= p.startMin && min < p.endMin,
+          ) ?? schedule.placements.find((p) => p.id === drag.toPlacementId)
+        if (!target) return
+        setDrag((d) =>
+          d && d.kind === 'move' ? { ...d, toPlacementId: target.id, toStartMin: start } : d,
+        )
+        return
+      }
       const placement = schedule.placements.find((p) => p.id === drag.placementId)
       if (!placement) return
       const min = minAtPointer(placement.columnIndex, e.clientY, drag.kind === 'resize')
       if (min === null) return
       setDrag((d) => (d ? { ...d, toMin: min } : d))
     }
-    const up = () => {
+
+    const finish = () => {
       const previous = schedule
       let next: Schedule | null = null
-      if (drag.kind === 'paint') {
-        // A click with no travel still paints one row.
+      if (drag.kind === 'paint' || drag.kind === 'erase') {
+        // A click with no travel still covers the one row pressed.
         const to = drag.toMin === drag.anchorMin ? drag.anchorMin + SLOT_MINUTES : drag.toMin
         const from = drag.anchorMin
         const [lo, hi] = from < to ? [from, to] : [to, from + SLOT_MINUTES]
         next =
-          tool?.kind === 'erase'
+          drag.kind === 'erase'
             ? eraseSpan(schedule, drag.placementId, lo, hi)
-            : tool
+            : tool?.kind === 'paint'
               ? paintSpan(schedule, drag.placementId, tool.eventId, lo, hi)
               : null
-      } else {
+      } else if (drag.kind === 'resize') {
         next = resizeBlock(schedule, drag.placementId, drag.blockId, drag.edge, drag.toMin)
+      } else if (drag.kind === 'move') {
+        // A colliding move is simply refused — landing on a block and eating
+        // it would destroy work the user never pointed at.
+        next = moveBlock(
+          schedule,
+          drag.placementId,
+          drag.blockId,
+          drag.toPlacementId,
+          drag.toStartMin,
+        )
       }
       setDrag(null)
+      setPointer(null)
       if (next && next !== schedule) void persist(next, previous)
     }
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', up)
-    window.addEventListener('pointercancel', () => setDrag(null))
-    return () => {
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', up)
+
+    const cancel = () => {
+      setDrag(null)
+      setPointer(null)
     }
-  }, [drag, schedule, session, tool, persist, minAtPointer])
+
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', finish)
+    window.addEventListener('pointercancel', cancel)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', finish)
+      window.removeEventListener('pointercancel', cancel)
+    }
+  }, [drag, schedule, session, tool, persist, minAtPointer, columnAtPointer])
 
   const loadError =
     sessionLoad.error ??
@@ -333,22 +408,126 @@ export function SchedulePage() {
     apply(fromSolver(schedule, result.placements))
   }
 
-  const startPaint = (placementId: number, columnIndex: number, e: React.PointerEvent) => {
+  /** Press on empty grid inside a class: paint (or erase) a span. */
+  const startStroke = (placementId: number, columnIndex: number, e: React.PointerEvent) => {
     if (!tool) return
     const min = minAtPointer(columnIndex, e.clientY)
     if (min === null) return
     e.preventDefault()
-    setDrag({ kind: 'paint', placementId, anchorMin: min, toMin: min })
+    setPointer({ x: e.clientX, y: e.clientY })
+    setDrag({ kind: tool.kind, placementId, anchorMin: min, toMin: min })
   }
 
-  /** The span the current paint drag would write, for the live preview. */
-  const previewSpan = (placementId: number): { from: number; to: number } | null => {
-    if (!drag || drag.kind !== 'paint' || drag.placementId !== placementId) return null
+  /** Press on a block's body: move it whole. Erase tool erases instead. */
+  const startMove = (
+    placementId: number,
+    columnIndex: number,
+    blockId: number,
+    e: React.PointerEvent,
+  ) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setPointer({ x: e.clientX, y: e.clientY })
+    if (tool?.kind === 'erase') {
+      const min = minAtPointer(columnIndex, e.clientY)
+      if (min === null) return
+      setDrag({ kind: 'erase', placementId, anchorMin: min, toMin: min })
+      return
+    }
+    const block = schedule?.placements
+      .find((p) => p.id === placementId)
+      ?.blocks.find((b) => b.id === blockId)
+    const min = minAtPointer(columnIndex, e.clientY, true)
+    if (!block || min === null) return
+    setDrag({
+      kind: 'move',
+      placementId,
+      blockId,
+      // Grab the block where it was actually held, so it doesn't jump.
+      grabOffsetMin: min - block.startMin,
+      toPlacementId: placementId,
+      toStartMin: block.startMin,
+    })
+  }
+
+  const startResize = (
+    placementId: number,
+    blockId: number,
+    edge: 'start' | 'end',
+    atMin: number,
+    e: React.PointerEvent,
+  ) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setPointer({ x: e.clientX, y: e.clientY })
+    setDrag({ kind: 'resize', placementId, blockId, edge, toMin: atMin })
+  }
+
+  /** The span a paint/erase stroke would write, for the live preview. */
+  const strokeSpan = (placementId: number): { from: number; to: number } | null => {
+    if (!drag || (drag.kind !== 'paint' && drag.kind !== 'erase')) return null
+    if (drag.placementId !== placementId) return null
     const to = drag.toMin === drag.anchorMin ? drag.anchorMin + SLOT_MINUTES : drag.toMin
     return drag.anchorMin < to
       ? { from: drag.anchorMin, to }
       : { from: to, to: drag.anchorMin + SLOT_MINUTES }
   }
+
+  /** Where a block being dragged or resized would end up, and if it's legal. */
+  const ghost = (): {
+    placementId: number
+    startMin: number
+    endMin: number
+    eventId: number
+    fits: boolean
+  } | null => {
+    if (!drag || !schedule) return null
+    if (drag.kind === 'move') {
+      const target = moveTarget(
+        schedule,
+        drag.placementId,
+        drag.blockId,
+        drag.toPlacementId,
+        drag.toStartMin,
+      )
+      const block = schedule.placements
+        .find((p) => p.id === drag.placementId)
+        ?.blocks.find((b) => b.id === drag.blockId)
+      if (!target || !block) return null
+      return { placementId: drag.toPlacementId, ...target, eventId: block.eventId }
+    }
+    if (drag.kind === 'resize') {
+      const placement = schedule.placements.find((p) => p.id === drag.placementId)
+      const block = placement?.blocks.find((b) => b.id === drag.blockId)
+      const bounds = blockBounds(schedule, drag.placementId, drag.blockId)
+      if (!placement || !block || !bounds) return null
+      const startMin =
+        drag.edge === 'start'
+          ? Math.min(Math.max(drag.toMin, bounds.min), block.endMin - SLOT_MINUTES)
+          : block.startMin
+      const endMin =
+        drag.edge === 'end'
+          ? Math.max(Math.min(drag.toMin, bounds.max), block.startMin + SLOT_MINUTES)
+          : block.endMin
+      return { placementId: drag.placementId, startMin, endMin, eventId: block.eventId, fits: true }
+    }
+    return null
+  }
+
+  /** "Beam 16:05–16:20" — what the drag is about to do, follow the cursor. */
+  const dragTooltip = (): { text: string; fits: boolean } | null => {
+    if (!drag) return null
+    const name = (id: number) => eventById.get(id)?.name ?? 'Event'
+    const g = ghost()
+    if (g) return { text: `${name(g.eventId)} ${formatRange(g.startMin, g.endMin)}`, fits: g.fits }
+    const span = strokeSpan(drag.placementId)
+    if (!span) return null
+    if (drag.kind === 'erase') return { text: `Erase ${formatRange(span.from, span.to)}`, fits: true }
+    if (tool?.kind !== 'paint') return null
+    return { text: `${name(tool.eventId)} ${formatRange(span.from, span.to)}`, fits: true }
+  }
+
+  const tip = dragTooltip()
 
   return (
     <div className="space-y-4">
@@ -428,7 +607,7 @@ export function SchedulePage() {
           Erase
         </button>
         <span className="ml-auto text-xs text-slate-500 dark:text-slate-400">
-          Drag down a class to paint · drag a block's edge to resize
+          Drag empty rows to paint · drag a block to move it · drag its edge to resize
         </span>
       </div>
 
@@ -604,31 +783,38 @@ export function SchedulePage() {
               )
             })}
 
-            {/* Time column — sticky left, so a wide grid keeps its clock. */}
+            {/* Time column — sticky left, so a wide grid keeps its clock.
+                Every 5-minute row is labelled, since every row is a target;
+                the hour and half hour are bold so the eye can anchor. */}
             <div
               className="sticky left-0 z-10 border-r border-slate-200 bg-slate-100 dark:border-slate-700 dark:bg-slate-700"
               style={{ height: laneHeight(session) }}
             >
-              {Array.from({ length: rows }, (_, i) => (
-                <div
-                  key={i}
-                  className={`px-2 text-right text-[10px] leading-none text-slate-500 dark:text-slate-400 ${
-                    rowLabel(session, i).endsWith(':00')
-                      ? 'font-bold text-slate-700 dark:text-slate-200'
-                      : ''
-                  }`}
-                  style={{ height: ROW_H, paddingTop: 2 }}
-                >
-                  {rowLabel(session, i).endsWith(':00') || rowLabel(session, i).endsWith(':30')
-                    ? rowLabel(session, i)
-                    : ''}
-                </div>
-              ))}
+              {Array.from({ length: rows }, (_, i) => {
+                const label = rowLabel(session, i)
+                const hour = label.endsWith(':00')
+                const half = label.endsWith(':30')
+                return (
+                  <div
+                    key={i}
+                    className={`flex items-start justify-end px-2 tabular-nums ${
+                      hour
+                        ? 'text-[11px] font-bold text-slate-700 dark:text-slate-200'
+                        : half
+                          ? 'text-[10px] font-semibold text-slate-600 dark:text-slate-300'
+                          : 'text-[10px] text-slate-400 dark:text-slate-500'
+                    }`}
+                    style={{ height: ROW_H, paddingTop: 1 }}
+                  >
+                    {hour ? label : `:${label.slice(3)}`}
+                  </div>
+                )
+              })}
             </div>
 
-            {/* Lanes. Rows are drawn as a background gradient rather than 48
-                divs per column, and blocks are absolutely positioned — at 16
-                lanes that is a few hundred nodes instead of many thousand. */}
+            {/* Lanes. Rows are drawn as background gradients rather than a div
+                per slot, and blocks are absolutely positioned — at 16 lanes
+                that is a few hundred nodes instead of many thousand. */}
             {columns.map((c) => (
               <div
                 key={c}
@@ -637,22 +823,22 @@ export function SchedulePage() {
                   else laneRefs.current.delete(c)
                 }}
                 className="relative border-r border-slate-200 dark:border-slate-700"
-                style={{
-                  height: laneHeight(session),
-                  backgroundImage: `repeating-linear-gradient(to bottom, transparent, transparent ${ROW_H - 1}px, var(--row-line) ${ROW_H - 1}px, var(--row-line) ${ROW_H}px)`,
-                }}
+                style={{ height: laneHeight(session), ...laneBackground(session) }}
               >
                 {schedule.placements
                   .filter((p) => p.columnIndex === c)
                   .map((p) => {
                     const cls = classById.get(p.classId)
                     const placementConflicts = conflicts.placements.get(p.id)
-                    const preview = previewSpan(p.id)
+                    const stroke = strokeSpan(p.id)
+                    const g = ghost()
                     return (
                       <div
                         key={p.id}
                         data-testid={`placement-${p.id}`}
                         className={`absolute inset-x-0 touch-none ${
+                          tool?.kind === 'erase' ? 'cursor-cell' : 'cursor-crosshair'
+                        } ${
                           placementConflicts
                             ? 'ring-2 ring-red-500'
                             : 'ring-1 ring-slate-300 dark:ring-slate-600'
@@ -665,29 +851,43 @@ export function SchedulePage() {
                           height: spanHeight(p.startMin, p.endMin),
                         }}
                         onPointerDown={(e) => {
-                          // Only a bare lane press paints; the header and the
-                          // resize handles have their own gestures.
-                          if ((e.target as HTMLElement).closest('[data-no-paint]')) return
-                          startPaint(p.id, c, e)
+                          // Only bare grid paints. Blocks, handles and the
+                          // class header run their own gestures, so the three
+                          // never fight over the same press.
+                          if ((e.target as HTMLElement).closest('[data-gesture]')) return
+                          startStroke(p.id, c, e)
                         }}
                       >
-
                         {p.blocks.map((b) => {
                           const event = eventById.get(b.eventId)
                           const color = event?.color ?? '#BAB0AC'
                           const reasons = conflicts.blocks.get(b.id)
                           const outage = outageFor(b.eventId, b.coachId)
                           const coach = b.coachId === null ? undefined : coachById.get(b.coachId)
+                          const dragging =
+                            drag?.kind === 'move' && drag.blockId === b.id && drag.placementId === p.id
+                          const resizing =
+                            drag?.kind === 'resize' && drag.blockId === b.id && drag.placementId === p.id
+                          const tall = spanHeight(b.startMin, b.endMin) >= ROW_H * 2
                           return (
                             <div
                               key={b.id}
+                              data-gesture
                               data-testid={`block-${b.eventId}-${b.startMin}`}
                               // Thick top/bottom edges keep the boundary
                               // visible even between two same-colored blocks.
-                              className={`absolute inset-x-0 overflow-hidden border-y-2 border-black/40 px-1 ${
-                                reasons ? 'ring-2 ring-inset ring-red-500' : ''
-                              } ${!reasons && outage ? 'ring-2 ring-inset ring-amber-500' : ''} ${
-                                b.locked ? 'outline-2 -outline-offset-2 outline-slate-900' : ''
+                              // They are an inset shadow rather than a real
+                              // border so the resize handles can sit flush
+                              // with the block's true edge — with a border,
+                              // its outermost pixels belong to the block and
+                              // grabbing the very edge moved instead of
+                              // resized.
+                              className={`group absolute inset-x-0 overflow-hidden shadow-[inset_0_2px_0_rgba(0,0,0,0.45),inset_0_-2px_0_rgba(0,0,0,0.45)] ${
+                                tool?.kind === 'erase' ? 'cursor-cell' : 'cursor-grab active:cursor-grabbing'
+                              } ${reasons ? 'ring-2 ring-inset ring-red-500' : ''} ${
+                                !reasons && outage ? 'ring-2 ring-inset ring-amber-500' : ''
+                              } ${b.locked ? 'outline-2 -outline-offset-2 outline-slate-900' : ''} ${
+                                dragging || resizing ? 'opacity-40' : ''
                               }`}
                               // Colour always encodes the event, conflict or
                               // not; the warning is the ring and the marker.
@@ -700,8 +900,9 @@ export function SchedulePage() {
                               title={
                                 reasons?.map((r) => BLOCK_CONFLICT_LABELS[r]).join('; ') ??
                                 outage ??
-                                `${event?.name ?? 'Event'} ${formatRange(b.startMin, b.endMin)}`
+                                `${event?.name ?? 'Event'} ${formatRange(b.startMin, b.endMin)} — drag to move, drag an edge to resize`
                               }
+                              onPointerDown={(e) => startMove(p.id, c, b.id, e)}
                             >
                               {/* Name once at the top of the block; the color
                                   carries through the rest of the span. A block
@@ -709,67 +910,64 @@ export function SchedulePage() {
                                   its label below the floating class header so
                                   the event name is never hidden by it. */}
                               <div
-                                className="flex items-start gap-0.5"
-                                style={{ paddingTop: b.startMin === p.startMin ? 14 : 0 }}
+                                className="flex items-start gap-0.5 px-1"
+                                style={{ paddingTop: b.startMin === p.startMin ? 15 : 3 }}
                               >
                                 <button
-                                  data-no-paint
+                                  data-gesture
+                                  onPointerDown={(e) => e.stopPropagation()}
                                   onClick={() => apply(toggleBlockLock(schedule, p.id, b.id))}
                                   aria-label={b.locked ? `unlock ${event?.name}` : `lock ${event?.name}`}
                                   aria-pressed={b.locked}
-                                  className={`shrink-0 text-[9px] leading-none ${b.locked ? '' : 'opacity-40'}`}
+                                  className={`shrink-0 text-[10px] leading-none ${b.locked ? '' : 'opacity-40 group-hover:opacity-80'}`}
                                 >
                                   {b.locked ? '🔒' : '🔓'}
                                 </button>
-                                <span className="min-w-0 flex-1 text-[10px] font-semibold leading-tight">
+                                <span className="min-w-0 flex-1 text-[11px] font-semibold leading-tight">
                                   {reasons || outage ? '⚠ ' : ''}
                                   {event?.name ?? 'Unknown'}
-                                  {coach && (
+                                  {coach && tall && (
                                     <span className="block truncate font-normal opacity-80">
                                       {coach.name}
                                     </span>
                                   )}
                                 </span>
+                                {/* Delete without switching tools. */}
+                                <button
+                                  data-gesture
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                  onClick={() => apply(removeBlock(schedule, p.id, b.id))}
+                                  aria-label={`delete ${event?.name ?? 'block'}`}
+                                  className="shrink-0 rounded px-0.5 text-[11px] leading-none opacity-0 hover:bg-black/20 focus:opacity-100 group-hover:opacity-70"
+                                >
+                                  ×
+                                </button>
                               </div>
-                              {/* Edge handles: drag to lengthen or shorten. */}
-                              <div
-                                data-no-paint
-                                role="slider"
-                                aria-label={`resize ${event?.name ?? 'block'} start`}
-                                aria-valuenow={b.startMin}
-                                tabIndex={-1}
-                                onPointerDown={(e) => {
-                                  e.preventDefault()
-                                  e.stopPropagation()
-                                  setDrag({
-                                    kind: 'resize',
-                                    placementId: p.id,
-                                    blockId: b.id,
-                                    edge: 'start',
-                                    toMin: b.startMin,
-                                  })
-                                }}
-                                className="absolute inset-x-0 top-0 h-1.5 cursor-ns-resize touch-none bg-black/10 hover:bg-black/40"
-                              />
-                              <div
-                                data-no-paint
-                                role="slider"
-                                aria-label={`resize ${event?.name ?? 'block'} end`}
-                                aria-valuenow={b.endMin}
-                                tabIndex={-1}
-                                onPointerDown={(e) => {
-                                  e.preventDefault()
-                                  e.stopPropagation()
-                                  setDrag({
-                                    kind: 'resize',
-                                    placementId: p.id,
-                                    blockId: b.id,
-                                    edge: 'end',
-                                    toMin: b.endMin,
-                                  })
-                                }}
-                                className="absolute inset-x-0 bottom-0 h-1.5 cursor-ns-resize touch-none bg-black/10 hover:bg-black/40"
-                              />
+
+                              {/* Edge handles: drag to lengthen or shorten.
+                                  They show a grip on hover so the affordance
+                                  is findable, and they are the only part of a
+                                  block that resizes rather than moves. */}
+                              {(['start', 'end'] as const).map((edge) => (
+                                <div
+                                  key={edge}
+                                  data-gesture
+                                  role="slider"
+                                  aria-label={`resize ${event?.name ?? 'block'} ${edge}`}
+                                  aria-valuenow={edge === 'start' ? b.startMin : b.endMin}
+                                  aria-valuemin={p.startMin}
+                                  aria-valuemax={p.endMin}
+                                  tabIndex={-1}
+                                  onPointerDown={(e) =>
+                                    startResize(p.id, b.id, edge, edge === 'start' ? b.startMin : b.endMin, e)
+                                  }
+                                  className={`absolute inset-x-0 flex h-2 cursor-ns-resize touch-none items-center justify-center bg-black/10 hover:bg-black/40 ${
+                                    edge === 'start' ? 'top-0' : 'bottom-0'
+                                  }`}
+                                >
+                                  <span className="h-0.5 w-6 rounded-full bg-white/70 opacity-0 group-hover:opacity-100" />
+                                </div>
+                              ))}
                             </div>
                           )
                         })}
@@ -779,34 +977,57 @@ export function SchedulePage() {
                             not occupy a row: a 5-minute row spent on a label
                             would push the first event block down and misreport
                             its time, and the axis has to stay honest. */}
-                        <button
-                          data-no-paint
-                          onClick={() => setEditingPlacement(p.id)}
-                          title={`${cls?.name ?? 'Unknown class'} ${formatRange(p.startMin, p.endMin)} — click to edit`}
-                          className={`absolute left-0 right-0 top-0 z-[5] truncate px-1 text-left text-[10px] font-bold leading-tight ring-1 ring-black/20 ${
-                            placementConflicts
-                              ? 'bg-red-200 text-red-900'
-                              : 'bg-amber-100/95 text-amber-950'
-                          }`}
-                        >
-                          {placementConflicts ? '⚠ ' : ''}
-                          {cls?.name ?? 'Unknown class'}{' '}
-                          <span className="font-normal opacity-80">
-                            {formatRange(p.startMin, p.endMin)}
-                          </span>
-                        </button>
+                        {/* The strip itself is transparent to the pointer and
+                            only the label catches clicks, so the header does
+                            not steal the top resize handle of a block that
+                            starts at the class's own start. */}
+                        <div className="pointer-events-none absolute left-0 right-0 top-0 z-[5] flex">
+                          <button
+                            data-gesture
+                            onClick={() => setEditingPlacement(p.id)}
+                            title={`${cls?.name ?? 'Unknown class'} ${formatRange(p.startMin, p.endMin)} — click to edit`}
+                            className={`pointer-events-auto max-w-full truncate px-1 text-left text-[10px] font-bold leading-tight ring-1 ring-black/20 ${
+                              placementConflicts
+                                ? 'bg-red-200 text-red-900'
+                                : 'bg-amber-100/95 text-amber-950'
+                            }`}
+                          >
+                            {placementConflicts ? '⚠ ' : ''}
+                            {cls?.name ?? 'Unknown class'}{' '}
+                            <span className="font-normal opacity-80">
+                              {formatRange(p.startMin, p.endMin)}
+                            </span>
+                          </button>
+                        </div>
 
-                        {/* Live preview of the drag in progress. */}
-                        {preview && tool && (
+                        {/* Live preview: the span a stroke would write… */}
+                        {stroke && tool && (
                           <div
-                            className="pointer-events-none absolute inset-x-0 opacity-70 ring-2 ring-slate-900 dark:ring-slate-100"
+                            className="pointer-events-none absolute inset-x-0 z-[6] opacity-70 ring-2 ring-slate-900 dark:ring-slate-100"
                             style={{
-                              top: minToY(session, preview.from) - minToY(session, p.startMin),
-                              height: spanHeight(preview.from, preview.to),
+                              top: minToY(session, stroke.from) - minToY(session, p.startMin),
+                              height: spanHeight(stroke.from, stroke.to),
                               backgroundColor:
                                 tool.kind === 'paint'
                                   ? (eventById.get(tool.eventId)?.color ?? '#888')
                                   : 'transparent',
+                            }}
+                          />
+                        )}
+                        {/* …or where a moved/resized block would land. Red
+                            when it would collide, so a refused drop is
+                            obvious before the mouse comes up. */}
+                        {g && g.placementId === p.id && (
+                          <div
+                            className={`pointer-events-none absolute inset-x-0 z-[6] opacity-80 ring-2 ${
+                              g.fits ? 'ring-slate-900 dark:ring-slate-100' : 'ring-red-500'
+                            }`}
+                            style={{
+                              top: minToY(session, g.startMin) - minToY(session, p.startMin),
+                              height: spanHeight(g.startMin, g.endMin),
+                              backgroundColor: g.fits
+                                ? (eventById.get(g.eventId)?.color ?? '#888')
+                                : 'rgba(239,68,68,0.35)',
                             }}
                           />
                         )}
@@ -816,6 +1037,20 @@ export function SchedulePage() {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* What the drag is about to do, following the cursor. */}
+      {tip && pointer && (
+        <div
+          role="status"
+          className={`pointer-events-none fixed z-50 rounded-md px-2 py-1 text-xs font-semibold tabular-nums text-white shadow-lg ${
+            tip.fits ? 'bg-slate-900 dark:bg-slate-700' : 'bg-red-600'
+          }`}
+          style={{ left: pointer.x + 14, top: pointer.y + 14 }}
+        >
+          {tip.text}
+          {!tip.fits && ' — blocked'}
         </div>
       )}
 
