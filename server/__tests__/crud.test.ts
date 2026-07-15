@@ -228,7 +228,7 @@ describe('classes CRUD', () => {
       .expect(400)
   })
 
-  it('deleting a class scrubs sessions', async () => {
+  it('deleting a class removes its placements from every session', async () => {
     const cls = (
       await request(app).post('/api/classes').set('Cookie', cookie).send({ name: 'L3' })
     ).body.class
@@ -240,8 +240,13 @@ describe('classes CRUD', () => {
     ).body.session
 
     await request(app).delete(`/api/classes/${cls.id}`).set('Cookie', cookie).expect(204)
-    const sessions = await request(app).get('/api/sessions').set('Cookie', cookie)
-    expect(sessions.body.sessions.find((s: { id: number }) => s.id === session.id).classes).toEqual([])
+    const { schedule } = (
+      await request(app).get(`/api/sessions/${session.id}/schedule`).set('Cookie', cookie)
+    ).body
+    expect(schedule.placements).toEqual([])
+    // The lane itself survives — the column is a place, not the class.
+    const after = await request(app).get(`/api/sessions/${session.id}`).set('Cookie', cookie)
+    expect(after.body.session.columnCount).toBe(1)
   })
 })
 
@@ -256,9 +261,33 @@ describe('sessions CRUD', () => {
       date: '2026-03-02',
       startTime: '16:00',
       endTime: '18:30',
-      rotationLength: 15,
-      classes: [],
+      columnCount: 0,
     })
+  })
+
+  it('seeds a column per class when created with classes', async () => {
+    const a = (await request(app).post('/api/classes').set('Cookie', cookie).send({ name: 'LV 1' }))
+      .body.class.id
+    const b = (await request(app).post('/api/classes').set('Cookie', cookie).send({ name: 'LV 2' }))
+      .body.class.id
+    const session = (
+      await request(app)
+        .post('/api/sessions')
+        .set('Cookie', cookie)
+        .send({ date: '2026-03-02', startTime: '16:00', endTime: '18:00', classes: [a, b] })
+        .expect(201)
+    ).body.session
+    expect(session.columnCount).toBe(2)
+
+    const { schedule } = (
+      await request(app).get(`/api/sessions/${session.id}/schedule`).set('Cookie', cookie)
+    ).body
+    // Each class gets its own lane, running the whole window — what a fresh
+    // session used to mean before columns existed.
+    expect(schedule.placements).toMatchObject([
+      { classId: a, columnIndex: 0, startMin: 960, endMin: 1080, blocks: [] },
+      { classId: b, columnIndex: 1, startMin: 960, endMin: 1080, blocks: [] },
+    ])
   })
 
   it('rejects a missing or unreal date', async () => {
@@ -291,21 +320,38 @@ describe('sessions CRUD', () => {
     ])
   })
 
-  it('accepts any 5-minute multiple as rotation length', async () => {
-    const created = await request(app)
-      .post('/api/sessions')
-      .set('Cookie', cookie)
-      .send({ date: '2026-03-03', startTime: '17:00', endTime: '19:05', rotationLength: 25 })
-      .expect(201)
-    expect(created.body.session.rotationLength).toBe(25)
-  })
-
-  it('rejects rotation lengths that are not multiples of 5', async () => {
+  it('rejects a session window off the 5-minute axis', async () => {
     await request(app)
       .post('/api/sessions')
       .set('Cookie', cookie)
-      .send({ date: '2026-03-03', startTime: '17:00', endTime: '19:00', rotationLength: 17 })
+      .send({ date: '2026-03-03', startTime: '17:02', endTime: '19:00' })
       .expect(400)
+  })
+
+  it('refuses to shrink a session window past its class placements', async () => {
+    const classId = (
+      await request(app).post('/api/classes').set('Cookie', cookie).send({ name: 'L3' })
+    ).body.class.id
+    const session = (
+      await request(app)
+        .post('/api/sessions')
+        .set('Cookie', cookie)
+        .send({ date: '2026-03-02', startTime: '16:00', endTime: '20:00', classes: [classId] })
+    ).body.session
+
+    const res = await request(app)
+      .put(`/api/sessions/${session.id}`)
+      .set('Cookie', cookie)
+      .send({ date: '2026-03-02', startTime: '16:00', endTime: '18:00' })
+      .expect(400)
+    expect(res.body.error).toMatch(/outside the new session window/)
+
+    // Widening is fine — nothing falls outside.
+    await request(app)
+      .put(`/api/sessions/${session.id}`)
+      .set('Cookie', cookie)
+      .send({ date: '2026-03-02', startTime: '15:00', endTime: '21:00' })
+      .expect(200)
   })
 
   it('stores day-of outages separately from session edits', async () => {
@@ -337,7 +383,7 @@ describe('sessions CRUD', () => {
     expect(after.body.session.unavailableEvents).toEqual([1, 2])
   })
 
-  it('copies a session with schedule, classes, and duration', async () => {
+  it('copies a session, shifting the whole grid to the new start time', async () => {
     const eventId = (
       await request(app).post('/api/events').set('Cookie', cookie).send({ name: 'Vault' })
     ).body.event.id
@@ -353,14 +399,24 @@ describe('sessions CRUD', () => {
           date: '2026-03-02',
           startTime: '16:00',
           endTime: '18:30',
-          rotationLength: 30,
           classes: [classId],
         })
     ).body.session
+    // A class on a partial window with one painted, locked block.
     await request(app)
-      .put(`/api/sessions/${source.id}/assignments`)
+      .put(`/api/sessions/${source.id}/schedule`)
       .set('Cookie', cookie)
-      .send({ assignments: [{ slotIndex: 0, eventId, classId, coachId: null, locked: true }] })
+      .send({
+        placements: [
+          {
+            classId,
+            columnIndex: 0,
+            startMin: 960, // 16:00
+            endMin: 1050, // 17:30
+            blocks: [{ eventId, coachId: null, startMin: 960, endMin: 990, locked: true }],
+          },
+        ],
+      })
       .expect(200)
     await request(app)
       .put(`/api/sessions/${source.id}/outages`)
@@ -375,23 +431,27 @@ describe('sessions CRUD', () => {
         .send({ name: 'Thursday', date: '2026-03-05', startTime: '17:00' })
         .expect(201)
     ).body.session
-    // Same duration and rotation, chosen date/time, same classes, no outages.
+    // Same window length and columns, chosen date/time, no outages.
     expect(copy).toMatchObject({
       name: 'Thursday',
       date: '2026-03-05',
       startTime: '17:00',
       endTime: '19:30',
-      rotationLength: 30,
-      classes: [classId],
+      columnCount: 1,
       absentCoaches: [],
       unavailableEvents: [],
     })
-    // Schedule copied, arriving unlocked.
-    const assignments = (
-      await request(app).get(`/api/sessions/${copy.id}/assignments`).set('Cookie', cookie)
-    ).body.assignments
-    expect(assignments).toEqual([
-      { slotIndex: 0, eventId, classId, coachId: null, locked: false },
+
+    // The grid came along shifted by the +1h start delta, and the copied
+    // block arrives unlocked so it can be regenerated over.
+    const { schedule } = (
+      await request(app).get(`/api/sessions/${copy.id}/schedule`).set('Cookie', cookie)
+    ).body
+    expect(schedule.placements).toMatchObject([
+      { classId, columnIndex: 0, startMin: 1020, endMin: 1110 },
+    ])
+    expect(schedule.placements[0].blocks).toMatchObject([
+      { eventId, coachId: null, startMin: 1020, endMin: 1050, locked: false },
     ])
   })
 

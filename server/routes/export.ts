@@ -1,16 +1,18 @@
 import { Router } from 'express'
 import ExcelJS from 'exceljs'
 import type { DatabaseSync } from 'node:sqlite'
-import { slotCount, slotStart } from '../../shared/slots.ts'
+import { SLOT_MINUTES, formatRange, formatTime, rowCount, rowStartMin } from '../../shared/slots.ts'
 import { textColorFor } from '../../shared/colors.ts'
 import { formatDateLong, formatDateShort } from '../../shared/dates.ts'
 import { ApiError, idParam } from '../validate.ts'
+import { loadSchedule } from './schedule.ts'
 
 // Styling matched to the reference sheet (hand-made gym schedule photo):
 // bright yellow class header, medium-gray time column, thin black gridlines
 // through blocks with medium borders at block boundaries, labels flush left.
 const HEADER_FILL = '#FFFF00'
 const TIME_FILL = '#BFBFBF'
+const CLASS_HEADER_FILL = '#FFF2CC'
 
 const thin = { style: 'thin' as const }
 const medium = { style: 'medium' as const }
@@ -21,15 +23,7 @@ interface SessionRow {
   date: string
   start_time: string
   end_time: string
-  rotation_length: number
-  groups: string
-}
-
-interface AssignmentRow {
-  slot_index: number
-  event_id: number
-  group_id: number
-  coach_id: number | null
+  column_count: number
 }
 
 /** ExcelJS wants ARGB without the leading '#'. */
@@ -58,56 +52,6 @@ function timeLabel(hhmm: string): string {
   return hhmm.endsWith(':00') ? hhmm : `:${hhmm.slice(3)}`
 }
 
-/**
- * One class's column, sliced into blocks: consecutive slots on the same
- * event with the same coach. Each class's blocks stand alone — rotation
- * boundaries may be staggered across classes.
- */
-interface CellBlock {
-  startSlot: number
-  length: number
-  label: string
-  color: string
-}
-
-function blocksForClass(
-  slots: number,
-  cellsBySlot: Map<number, AssignmentRow[]>,
-  eventName: (id: number) => string,
-  eventColor: (id: number) => string,
-  coachName: (id: number) => string | undefined,
-): CellBlock[] {
-  const keyOf = (list: AssignmentRow[]) =>
-    list.map((a) => `${a.event_id}:${a.coach_id ?? ''}`).join('|')
-  const blocks: CellBlock[] = []
-  let current: (CellBlock & { key: string }) | null = null
-  for (let slot = 0; slot < slots; slot++) {
-    const here = cellsBySlot.get(slot) ?? []
-    if (here.length === 0) {
-      current = null
-      continue
-    }
-    const key = keyOf(here)
-    if (current && current.key === key) {
-      current.length++
-      continue
-    }
-    const labels = here.map((a) => {
-      const coach = a.coach_id === null ? undefined : coachName(a.coach_id)
-      return coach ? `${eventName(a.event_id)}\n${coach}` : eventName(a.event_id)
-    })
-    current = {
-      key,
-      startSlot: slot,
-      length: 1,
-      label: labels.join(' / '),
-      color: eventColor(here[0]!.event_id),
-    }
-    blocks.push(current)
-  }
-  return blocks
-}
-
 export function exportRoutes(db: DatabaseSync): Router {
   const router = Router()
 
@@ -115,92 +59,91 @@ export function exportRoutes(db: DatabaseSync): Router {
     const sessionId = idParam(req.params.id)
     const session = db
       .prepare(
-        'SELECT id, name, date, start_time, end_time, rotation_length, groups FROM sessions WHERE id = ?',
+        'SELECT id, name, date, start_time, end_time, column_count FROM sessions WHERE id = ?',
       )
       .get(sessionId) as unknown as SessionRow | undefined
     if (!session) throw new ApiError(404, 'session not found')
 
-    const window = {
-      startTime: session.start_time,
-      endTime: session.end_time,
-      rotationLength: session.rotation_length,
-    }
+    const window = { startTime: session.start_time, endTime: session.end_time }
     const label = session.name || `${formatDateShort(session.date)} ${session.start_time}`
+    const { placements } = loadSchedule(db, sessionId)
 
-    const assignments = db
-      .prepare(
-        'SELECT slot_index, event_id, group_id, coach_id FROM assignments WHERE session_id = ? ORDER BY slot_index, event_id, group_id',
-      )
-      .all(sessionId) as unknown as AssignmentRow[]
-
-    // Columns: the session's classes in their stored order, plus any class
-    // that has assignments here (e.g. removed from the session later).
-    const classNamesById = new Map(
+    const classNames = new Map(
       (db.prepare('SELECT id, name FROM groups').all() as { id: number; name: string }[]).map(
-        (g) => [g.id, g.name],
+        (c) => [c.id, c.name],
       ),
     )
-    const sessionClassIds = JSON.parse(session.groups) as number[]
-    const columnClassIds = [
-      ...sessionClassIds,
-      ...[...new Set(assignments.map((a) => a.group_id))].filter(
-        (id) => !sessionClassIds.includes(id),
-      ),
-    ].filter((id) => classNamesById.has(id))
-
     const events = db
       .prepare('SELECT id, name, color FROM events')
       .all() as { id: number; name: string; color: string }[]
     const eventName = (id: number) => events.find((e) => e.id === id)?.name ?? `event #${id}`
     const eventColor = (id: number) => events.find((e) => e.id === id)?.color ?? '#BAB0AC'
-    const coachNamesById = new Map(
+    const coachNames = new Map(
       (db.prepare('SELECT id, name FROM coaches').all() as { id: number; name: string }[]).map(
         (c) => [c.id, c.name],
       ),
     )
 
     const workbook = new ExcelJS.Workbook()
+    const rows = rowCount(window)
+    const columnCount = Math.max(session.column_count, 1)
+    const totalColumns = 1 + columnCount
+
     const sheet = workbook.addWorksheet(sheetName(label), {
-      pageSetup: { orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
+      pageSetup: {
+        // 16+ classes never fit portrait; tile across pages instead of
+        // shrinking the sheet into illegibility.
+        orientation: 'landscape',
+        fitToPage: false,
+        horizontalCentered: true,
+      },
+      views: [{ state: 'frozen', xSplit: 1, ySplit: 3 }],
     })
-    const columnCount = 1 + columnClassIds.length
-    const slots = slotCount(window)
+    // The time column and the header rows repeat on every printed page, so
+    // a tiled sheet still reads.
+    sheet.pageSetup.printTitlesRow = '1:3'
+    sheet.pageSetup.printTitlesColumn = 'A:A'
+
     const HEADER_ROW = 3
     const FIRST_SLOT_ROW = 4
+    const rowFor = (min: number) => FIRST_SLOT_ROW + (min - rowStartMin(window, 0)) / SLOT_MINUTES
 
-    // Rows 1–2: session name, then day + time range + rotation.
-    sheet.mergeCells(1, 1, 1, columnCount)
+    // Rows 1–2: session name, then date + time range.
+    sheet.mergeCells(1, 1, 1, totalColumns)
     const title = sheet.getCell(1, 1)
     title.value = label
     title.font = { bold: true, size: 14 }
 
-    sheet.mergeCells(2, 1, 2, columnCount)
+    sheet.mergeCells(2, 1, 2, totalColumns)
     const subtitle = sheet.getCell(2, 1)
-    subtitle.value = `${formatDateLong(session.date)} · ${session.start_time}–${session.end_time} · ${session.rotation_length}-minute rotations`
+    subtitle.value = `${formatDateLong(session.date)} · ${session.start_time}–${session.end_time}`
     subtitle.font = { size: 11, color: { argb: 'FF555555' } }
 
-    // Row 3: class names, bold on a yellow highlight.
+    // Row 3: column (lane) headers. A column is a lane, not a class, so it
+    // is numbered; the classes name themselves inside it.
     const headerRow = sheet.getRow(HEADER_ROW)
     headerRow.getCell(1).value = 'Time'
     headerRow.getCell(1).fill = solidFill(TIME_FILL)
     headerRow.getCell(1).font = { bold: true }
     headerRow.getCell(1).alignment = { horizontal: 'right' }
     headerRow.getCell(1).border = { top: thin, left: thin, right: thin, bottom: medium }
-    columnClassIds.forEach((classId, i) => {
-      const cell = headerRow.getCell(i + 2)
-      cell.value = classNamesById.get(classId)!
+    for (let c = 0; c < columnCount; c++) {
+      const cell = headerRow.getCell(c + 2)
+      const names = placements
+        .filter((p) => p.columnIndex === c)
+        .sort((a, b) => a.startMin - b.startMin)
+        .map((p) => classNames.get(p.classId) ?? `class #${p.classId}`)
+      cell.value = names.join(' → ') || `Column ${c + 1}`
       cell.fill = solidFill(HEADER_FILL)
       cell.font = { bold: true }
-      cell.alignment = { horizontal: 'left' }
+      cell.alignment = { horizontal: 'left', wrapText: true }
       cell.border = { top: thin, left: thin, right: thin, bottom: medium }
-    })
+    }
 
-    // Full grid of thin black borders first — the reference sheet shows
-    // gridlines even through blocks and empty cells; block boundaries get
-    // heavier edges in the block pass below.
-    for (let slot = 0; slot < slots; slot++) {
-      for (let c = 1; c <= columnCount; c++) {
-        sheet.getRow(FIRST_SLOT_ROW + slot).getCell(c).border = {
+    // Thin gridlines everywhere first; blocks draw heavier edges over them.
+    for (let r = 0; r < rows; r++) {
+      for (let c = 1; c <= totalColumns; c++) {
+        sheet.getRow(FIRST_SLOT_ROW + r).getCell(c).border = {
           top: thin,
           left: thin,
           right: thin,
@@ -210,54 +153,64 @@ export function exportRoutes(db: DatabaseSync): Router {
     }
 
     // Time column: full time on the hour, ":MM" between hours.
-    for (let slot = 0; slot < slots; slot++) {
-      const cell = sheet.getRow(FIRST_SLOT_ROW + slot).getCell(1)
-      cell.value = timeLabel(slotStart(window, slot))
+    for (let r = 0; r < rows; r++) {
+      const cell = sheet.getRow(FIRST_SLOT_ROW + r).getCell(1)
+      cell.value = timeLabel(formatTime(rowStartMin(window, r)))
       cell.fill = solidFill(TIME_FILL)
-      cell.font = { bold: true }
+      cell.font = { bold: true, size: 9 }
       cell.alignment = { horizontal: 'right', vertical: 'top' }
     }
 
-    // Class columns, each rendered independently from its own assignments —
-    // block starts/ends may be staggered arbitrarily across classes.
-    columnClassIds.forEach((classId, i) => {
-      const column = i + 2
-      const cellsBySlot = new Map<number, AssignmentRow[]>()
-      for (const a of assignments) {
-        if (a.group_id !== classId) continue
-        const list = cellsBySlot.get(a.slot_index)
-        if (list) list.push(a)
-        else cellsBySlot.set(a.slot_index, [a])
-      }
-      const blocks = blocksForClass(slots, cellsBySlot, eventName, eventColor, (id) =>
-        coachNamesById.get(id),
-      )
-      for (const block of blocks) {
-        const font = { color: { argb: argb(textColorFor(block.color)) } }
-        for (let offset = 0; offset < block.length; offset++) {
-          const cell = sheet.getRow(FIRST_SLOT_ROW + block.startSlot + offset).getCell(column)
-          // Event name only in the first cell; continuations keep the fill.
-          if (offset === 0) {
-            cell.value = block.label
-            cell.font = font
-            cell.alignment = { horizontal: 'left', vertical: 'top', wrapText: true }
-          }
-          cell.fill = solidFill(block.color)
-          // Medium top/bottom edges mark block boundaries even between
-          // same-colored neighbors; thin gridlines continue inside blocks.
-          cell.border = {
-            left: thin,
-            right: thin,
-            top: offset === 0 ? medium : thin,
-            bottom: offset === block.length - 1 ? medium : thin,
-          }
-        }
-      }
-    })
+    // Each placement: a class header band, then its painted event blocks.
+    for (const p of placements) {
+      const column = p.columnIndex + 2
+      const headerAt = rowFor(p.startMin)
+      const headerCell = sheet.getRow(headerAt).getCell(column)
+      headerCell.value = `${classNames.get(p.classId) ?? `class #${p.classId}`}  ${formatRange(p.startMin, p.endMin)}`
+      headerCell.fill = solidFill(CLASS_HEADER_FILL)
+      headerCell.font = { bold: true, size: 9 }
+      headerCell.alignment = { horizontal: 'left', vertical: 'middle' }
+      headerCell.border = { top: medium, left: medium, right: medium, bottom: thin }
 
-    sheet.getColumn(1).width = 9
-    for (let c = 2; c <= columnCount; c++) {
-      sheet.getColumn(c).width = 20
+      for (const b of p.blocks) {
+        const color = eventColor(b.eventId)
+        const first = Math.max(rowFor(b.startMin), headerAt + 1)
+        const last = rowFor(b.endMin) - 1
+        if (last < first) continue
+        // Merge the block into one cell so the event name has room to show
+        // in full rather than being clipped by a 5-minute row. A merged
+        // range styles through its master cell — writing to the others just
+        // redirects here — so set fill and borders once, as the outline of
+        // the whole block. Medium edges keep the boundary visible even
+        // between two same-colored neighbours.
+        if (last > first) sheet.mergeCells(first, column, last, column)
+        const cell = sheet.getRow(first).getCell(column)
+        const coach = b.coachId === null ? undefined : coachNames.get(b.coachId)
+        cell.value = coach ? `${eventName(b.eventId)}\n${coach}` : eventName(b.eventId)
+        cell.font = { color: { argb: argb(textColorFor(color)) }, size: 9 }
+        cell.alignment = { horizontal: 'left', vertical: 'top', wrapText: true }
+        cell.fill = solidFill(color)
+        cell.border = { left: thin, right: thin, top: medium, bottom: medium }
+      }
+
+      // Close the bottom of the class's window so its extent is visible
+      // even where nothing is painted. Skip it when a block already ends
+      // there — that block's own outline says it, and writing through a
+      // merged slave would clobber the master's borders.
+      const lastRow = rowFor(p.endMin) - 1
+      const endsOnBlock = p.blocks.some((b) => rowFor(b.endMin) - 1 === lastRow)
+      if (lastRow >= headerAt && !endsOnBlock) {
+        const cell = sheet.getRow(lastRow).getCell(column)
+        cell.border = { ...(cell.border ?? {}), bottom: medium }
+      }
+    }
+
+    sheet.getColumn(1).width = 8
+    for (let c = 2; c <= totalColumns; c++) {
+      sheet.getColumn(c).width = 18
+    }
+    for (let r = 0; r < rows; r++) {
+      sheet.getRow(FIRST_SLOT_ROW + r).height = 12
     }
 
     res.setHeader(

@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import type { DatabaseSync } from 'node:sqlite'
 import type { Coach, GymClass, GymEvent, RequiredEvent, Session } from '../../shared/types.ts'
-import { formatTime, parseTime } from '../../shared/slots.ts'
+import { formatTime, isSnapped, parseTime } from '../../shared/slots.ts'
 import { isHexColor, nextPaletteColor } from '../../shared/colors.ts'
 import { isIsoDate } from '../../shared/dates.ts'
 import {
@@ -54,8 +54,7 @@ interface SessionRow {
   date: string
   start_time: string
   end_time: string
-  rotation_length: number
-  groups: string
+  column_count: number
   absent_coaches: string
   unavailable_events: string
   is_sample: number
@@ -93,8 +92,7 @@ const toSession = (r: SessionRow): Session => ({
   date: r.date,
   startTime: r.start_time,
   endTime: r.end_time,
-  rotationLength: r.rotation_length,
-  classes: JSON.parse(r.groups) as number[],
+  columnCount: r.column_count,
   absentCoaches: JSON.parse(r.absent_coaches) as number[],
   unavailableEvents: JSON.parse(r.unavailable_events) as number[],
   isSample: r.is_sample === 1,
@@ -178,7 +176,7 @@ function parseSession(body: unknown): {
   date: string
   startTime: string
   endTime: string
-  rotationLength: number
+  /** Classes to seed the grid with, each a full-window column of its own. */
   classes: number[]
 } {
   const obj = asObject(body)
@@ -190,17 +188,14 @@ function parseSession(body: unknown): {
   if (start === null) throw new ApiError(400, 'startTime must be HH:MM')
   if (end === null) throw new ApiError(400, 'endTime must be HH:MM')
   if (end <= start) throw new ApiError(400, 'endTime must be after startTime')
-  const rotationLength =
-    obj.rotationLength === undefined ? 15 : reqInt(obj.rotationLength, 'rotationLength', 5, 240)
-  if (rotationLength % 5 !== 0) {
-    throw new ApiError(400, 'rotationLength must be a multiple of 5 minutes')
+  if (!isSnapped(start) || !isSnapped(end)) {
+    throw new ApiError(400, 'session times must land on 5-minute boundaries')
   }
   return {
     name: optString(obj.name, 'name'),
     date,
     startTime,
     endTime,
-    rotationLength,
     classes: intArray(obj.classes, 'classes'),
   }
 }
@@ -366,10 +361,9 @@ export function entityRoutes(db: DatabaseSync): Router {
   router.delete('/classes/:id', (req, res) => {
     const id = idParam(req.params.id)
     requireRow(db.prepare('SELECT id FROM groups WHERE id = ?').get(id), 'class')
-    withTransaction(db, () => {
-      db.prepare('DELETE FROM groups WHERE id = ?').run(id)
-      scrubIdFromJsonColumn(db, 'sessions', 'groups', id)
-    })
+    // Placements (and their blocks) cascade — a deleted class leaves the
+    // lane behind, not a ghost placement.
+    db.prepare('DELETE FROM groups WHERE id = ?').run(id)
     res.status(204).end()
   })
 
@@ -386,24 +380,71 @@ export function entityRoutes(db: DatabaseSync): Router {
     res.json({ session: toSession(row!) })
   })
 
+  // `classes` is a convenience for creating a session with a starting grid
+  // (the setup wizard uses it): each class lands in its own column running
+  // the whole window, which is exactly what a fresh session used to mean.
   router.post('/sessions', (req, res) => {
     const s = parseSession(req.body)
-    const result = db
-      .prepare(
-        'INSERT INTO sessions (name, date, start_time, end_time, rotation_length, groups) VALUES (?, ?, ?, ?, ?, ?)',
+    const startMin = parseTime(s.startTime)!
+    const endMin = parseTime(s.endTime)!
+    const sessionId = withTransaction(db, () => {
+      const result = db
+        .prepare(
+          'INSERT INTO sessions (name, date, start_time, end_time, column_count) VALUES (?, ?, ?, ?, ?)',
+        )
+        .run(s.name, s.date, s.startTime, s.endTime, s.classes.length)
+      const id = Number(result.lastInsertRowid)
+      const insert = db.prepare(
+        'INSERT INTO placements (session_id, class_id, column_index, start_min, end_min) VALUES (?, ?, ?, ?, ?)',
       )
-      .run(s.name, s.date, s.startTime, s.endTime, s.rotationLength, JSON.stringify(s.classes))
-    const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(result.lastInsertRowid) as unknown as SessionRow
+      s.classes.forEach((classId, index) => {
+        insert.run(id, classId, index, startMin, endMin)
+      })
+      return id
+    })
+    const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId) as unknown as SessionRow
     res.status(201).json({ session: toSession(row) })
   })
 
+  // Editing a session's window never touches its grid; `classes` is ignored
+  // here because placements own attendance once a session exists.
   router.put('/sessions/:id', (req, res) => {
     const id = idParam(req.params.id)
     const s = parseSession(req.body)
     requireRow(db.prepare('SELECT id FROM sessions WHERE id = ?').get(id), 'session')
+    const startMin = parseTime(s.startTime)!
+    const endMin = parseTime(s.endTime)!
+    const outside = db
+      .prepare(
+        'SELECT COUNT(*) AS n FROM placements WHERE session_id = ? AND (start_min < ? OR end_min > ?)',
+      )
+      .get(id, startMin, endMin) as { n: number }
+    if (outside.n > 0) {
+      throw new ApiError(
+        400,
+        `${outside.n} class placement${outside.n === 1 ? '' : 's'} would fall outside the new session window — move them first`,
+      )
+    }
     db.prepare(
-      'UPDATE sessions SET name = ?, date = ?, start_time = ?, end_time = ?, rotation_length = ?, groups = ? WHERE id = ?',
-    ).run(s.name, s.date, s.startTime, s.endTime, s.rotationLength, JSON.stringify(s.classes), id)
+      'UPDATE sessions SET name = ?, date = ?, start_time = ?, end_time = ? WHERE id = ?',
+    ).run(s.name, s.date, s.startTime, s.endTime, id)
+    const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as unknown as SessionRow
+    res.json({ session: toSession(row) })
+  })
+
+  // Columns are lanes, not classes: you can add empty ones to place into.
+  router.put('/sessions/:id/columns', (req, res) => {
+    const id = idParam(req.params.id)
+    requireRow(db.prepare('SELECT id FROM sessions WHERE id = ?').get(id), 'session')
+    const obj = asObject(req.body)
+    const columnCount = reqInt(obj.columnCount, 'columnCount', 0, 64)
+    const used = db
+      .prepare('SELECT COUNT(*) AS n FROM placements WHERE session_id = ? AND column_index >= ?')
+      .get(id, columnCount) as { n: number }
+    if (used.n > 0) {
+      throw new ApiError(400, 'a column still holds classes — move or remove them first')
+    }
+    db.prepare('UPDATE sessions SET column_count = ? WHERE id = ?').run(columnCount, id)
     const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as unknown as SessionRow
     res.json({ session: toSession(row) })
   })
@@ -432,8 +473,10 @@ export function entityRoutes(db: DatabaseSync): Router {
     res.json({ session: toSession(row) })
   })
 
-  // Copy a session as a starting point: same duration, rotation, classes,
-  // and full schedule (assignments arrive unlocked); outages don't copy.
+  // Copy a session as a starting point: same window length, columns, class
+  // placements, and painted blocks (arriving unlocked); outages don't copy.
+  // Shifting the start shifts every placement and block with it, so the
+  // grid lands identical, just later or earlier in the day.
   router.post('/sessions/:id/copy', (req, res) => {
     const id = idParam(req.params.id)
     const source = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as unknown as
@@ -456,24 +499,61 @@ export function entityRoutes(db: DatabaseSync): Router {
       throw new ApiError(400, 'the copied session would run past midnight — pick an earlier start')
     }
 
+    const shift = start - sourceStart
     const newId = withTransaction(db, () => {
       const inserted = db
         .prepare(
-          'INSERT INTO sessions (name, date, start_time, end_time, rotation_length, groups) VALUES (?, ?, ?, ?, ?, ?)',
+          'INSERT INTO sessions (name, date, start_time, end_time, column_count) VALUES (?, ?, ?, ?, ?)',
         )
-        .run(
-          name,
-          date,
-          startTime,
-          formatTime(end),
-          source!.rotation_length,
-          source!.groups,
-        )
+        .run(name, date, startTime, formatTime(end), source!.column_count)
       const sessionId = Number(inserted.lastInsertRowid)
-      db.prepare(
-        `INSERT INTO assignments (session_id, slot_index, event_id, group_id, coach_id, locked)
-         SELECT ?, slot_index, event_id, group_id, coach_id, 0 FROM assignments WHERE session_id = ?`,
-      ).run(sessionId, id)
+      const placements = db
+        .prepare(
+          'SELECT id, class_id, column_index, start_min, end_min FROM placements WHERE session_id = ?',
+        )
+        .all(id) as {
+        id: number
+        class_id: number
+        column_index: number
+        start_min: number
+        end_min: number
+      }[]
+      const insertPlacement = db.prepare(
+        'INSERT INTO placements (session_id, class_id, column_index, start_min, end_min) VALUES (?, ?, ?, ?, ?)',
+      )
+      const insertBlock = db.prepare(
+        'INSERT INTO event_blocks (placement_id, event_id, coach_id, start_min, end_min, locked) VALUES (?, ?, ?, ?, ?, 0)',
+      )
+      for (const p of placements) {
+        const newPlacementId = Number(
+          insertPlacement.run(
+            sessionId,
+            p.class_id,
+            p.column_index,
+            p.start_min + shift,
+            p.end_min + shift,
+          ).lastInsertRowid,
+        )
+        const blocks = db
+          .prepare(
+            'SELECT event_id, coach_id, start_min, end_min FROM event_blocks WHERE placement_id = ?',
+          )
+          .all(p.id) as {
+          event_id: number
+          coach_id: number | null
+          start_min: number
+          end_min: number
+        }[]
+        for (const b of blocks) {
+          insertBlock.run(
+            newPlacementId,
+            b.event_id,
+            b.coach_id,
+            b.start_min + shift,
+            b.end_min + shift,
+          )
+        }
+      }
       return sessionId
     })
     const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(newId) as unknown as SessionRow

@@ -28,7 +28,7 @@ export interface Coach {
 
 export interface RequiredEvent {
   eventId: number
-  /** Minutes; a multiple of the session's rotationLength. */
+  /** Minutes; a multiple of SLOT_MINUTES. */
   duration: number
 }
 
@@ -37,6 +37,7 @@ export interface GymClass {
   name: string
   /** Higher priority wins when conflicts arise. */
   priority: number
+  /** Optional — only an input to generation. Painting needs no setup. */
   requiredEvents: RequiredEvent[]
   /** Coach ids who travel with this class. */
   assignedCoaches: number[]
@@ -51,14 +52,12 @@ export interface Session {
    * sessions are per-date, not weekly slots; copy a session to repeat it.
    */
   date: string
-  /** "HH:MM" 24h */
+  /** Master window start, "HH:MM" 24h — the top of the time axis. */
   startTime: string
-  /** "HH:MM" 24h */
+  /** Master window end, "HH:MM" 24h. */
   endTime: string
-  /** Slot granularity in minutes. */
-  rotationLength: number
-  /** Class ids attending this session. */
-  classes: number[]
+  /** How many columns (lanes) the grid has. */
+  columnCount: number
   /** Coaches marked absent for this session only (day-of change). */
   absentCoaches: number[]
   /** Events marked out for this session only (day-of change). */
@@ -66,14 +65,40 @@ export interface Session {
   isSample: boolean
 }
 
-/** One cell of a schedule: a class at an event during one time slot. */
-export interface Assignment {
-  slotIndex: number
+/**
+ * One event a class is doing for a span, inside its placement's window.
+ * Blocks are explicit, never inferred by merging equal adjacent slots, so
+ * two consecutive blocks on the same event keep a visible boundary.
+ */
+export interface EventBlock {
+  /** Stable only within a loaded schedule; the grid saves in full. */
+  id: number
   eventId: number
-  classId: number
   coachId: number | null
-  /** Locked cells survive regeneration; the solver plans around them. */
-  locked?: boolean
+  /** Minutes since midnight, snapped to SLOT_MINUTES. */
+  startMin: number
+  endMin: number
+  /** Locked blocks survive regeneration; the solver plans around them. */
+  locked: boolean
+}
+
+/**
+ * A class sitting in one column for its own window. Placements in the same
+ * column must not overlap in time; a column is a lane, not a class.
+ */
+export interface Placement {
+  id: number
+  classId: number
+  columnIndex: number
+  /** The class's own window, minutes since midnight, SLOT_MINUTES-snapped. */
+  startMin: number
+  endMin: number
+  blocks: EventBlock[]
+}
+
+/** Everything the grid needs to render and save a session's schedule. */
+export interface Schedule {
+  placements: Placement[]
 }
 
 /** Whether coaches travel with their class or own an event. */

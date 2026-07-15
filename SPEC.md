@@ -57,12 +57,13 @@ storage keeps the original `groups` table name behind the server's mappers.
 - `name` (e.g., "Level 3 Girls", "Boys Team", "Xcel Silver")
 - `level` / priority — higher-priority classes get first pick when conflicts
   arise (e.g., optionals over recreational)
-- `requiredEvents` — the events this class must hit in a session, each with a
-  **duration**, freely editable per class (durations vary: e.g., Silver does
-  20 min vault while Gold does 35). While editing, the form shows the total
-  required time against each attending session's length — and flags
-  durations that don't divide into the session's rotation length — so a
-  schedule that can't fit is visible before generating.
+- `requiredEvents` — **optional**. The events this class must hit when the
+  solver fills its window, each with a **duration** (a multiple of 5 min),
+  freely editable per class (Silver does 20 min vault while Gold does 35).
+  While editing, the form shows the total required time against the class's
+  window in each session it is placed in, so a schedule that cannot fit is
+  visible before generating. Required events are **only** an input to
+  generation — painting a schedule by hand needs no setup at all.
 - `assignedCoaches` — coaches who travel with this class (some gyms rotate
   coaches by event instead; support both via a setting)
 
@@ -71,57 +72,114 @@ storage keeps the original `groups` table name behind the server's mappers.
   Monday, March 3), not a generic weekly slot: Monday week 1 differs from
   Monday week 2, and Monday differs from Tuesday. Session lists are sorted
   chronologically.
-- `startTime`, `endTime`
-- `classes` — which classes attend
-- `rotationLength` — base time slot granularity (e.g., 15 min increments);
-  event durations are multiples of this
+- `startTime`, `endTime` — the session's **master window** (e.g. 4:00–8:00).
+  This is the time axis of the grid, drawn in fixed **5-minute rows**.
+- `columnCount` — how many columns (lanes) the grid has.
+
+There is no session-wide "rotation length": the axis is always 5 minutes and
+every boundary snaps to it. Rotation lengths are a per-class, per-block
+matter now — a class's blocks are whatever the user paints.
 
 Repeating a practice week to week is **copying a session onto a new date**
 (the copy prompts for it, defaulting a week out) — that is the primary
 weekly workflow, not a recurrence rule. Recurring templates remain a
 nice-to-have (see below).
 
-### Schedule (generated output)
-- For each time slot × event: which class is there, which coach is there
-- Persisted so it can be reloaded, tweaked, and printed
+### Column (lane)
+A session's grid is a set of columns. **A column is not a class.** It is a
+lane that holds a vertical sequence of one or more class placements stacked
+in time. Columns can be added, removed, and reordered; a placement can be
+moved to another column.
 
-## Scheduling Algorithm
+### Placement (a class in a column, for a window)
+- `columnIndex` — which lane it sits in
+- `classId` — which class
+- `startMin`, `endMin` — the class's **own window** inside the session
+  window (e.g. Silver 4:00–7:00), snapped to 5 minutes
 
-This is the heart of the app. Treat it as a constraint-satisfaction problem:
+Placements in the same column **must not overlap in time** — that is the
+one hard rule of the lane model, and it is rejected/flagged. One column can
+hold LV 1 (4:00–5:00), then LV 2 (5:00–6:00), then VYC 2 (6:00–8:00). Times
+a column has no class present — before the first, between two, after the
+last — are simply **blank**. A class is never forced to fill the timeline.
+
+Attendance is expressed *entirely* by placements: a class is in a session
+because it is placed somewhere in it. There is no separate attending list.
+
+### Event block (what a class is doing, when)
+- Belongs to a placement, so it always lives inside that class's window
+- `eventId`, optional `coachId`, `startMin`/`endMin` (5-minute snapped)
+- `locked` — survives regeneration; the solver plans around it
+
+Blocks are stored **explicitly**, not inferred by merging equal adjacent
+slots: two consecutive blocks on the same event are two blocks, and the
+boundary between them stays visible. Blocks within a placement never
+overlap; painting over an existing block overwrites the painted span.
+
+## Building a schedule
+
+**Drag-to-paint is the primary way a schedule gets built.** The solver is a
+secondary convenience, not the main path. A head coach with a grid and a
+mouse must be able to build a full session without configuring anything
+first — no required events, no priorities, no setup.
+
+### The grid
+Classes across the top, time down the left — the same orientation as the
+Excel export and the gyms' own hand-made sheets. Rows are 5 minutes. Each
+column is a lane holding one or more class placements stacked in time; the
+class header (name + its time range) sits at the top of its block within the
+column. Outside a class's window the column is blank.
+
+### Painting
+- Pick an event from the palette, then click-drag down the 5-minute rows
+  inside a class's window to paint that event across the span. The drag
+  defines the length; releasing commits it. Everything snaps to 5 minutes.
+- Painting over existing blocks overwrites the painted span.
+- Drag the edge of a block to lengthen or shorten it.
+- There is a fast way to erase a span.
+- It must be fluid: minimal clicks, no keyboard needed, mouse or touch.
+
+### Generation (optional)
+"Generate" fills events **within each class's own window**, respecting that
+class's required events and durations. Manual and generated blocks coexist,
+and locked blocks are planned around.
 
 **Hard constraints (never violated):**
 1. An event's simultaneous classes never exceed its capacity (events
    without a limit are unconstrained).
-2. A class is in exactly one place at a time.
+2. A class is in exactly one place at a time. (Structural: blocks live
+   inside a placement and never overlap within it.)
 3. A coach is in exactly one place at a time.
-4. Each class completes all of its required events with their full durations
-   within the session window.
+4. Each class completes its required events with their full durations
+   **inside that class's own window** — not the session window.
 5. Inactive events are never scheduled.
+6. Blocks never fall outside their class's window.
 
 **Soft constraints (optimize, in priority order):**
 1. Higher-priority classes get their preferred/required layout first.
-2. Minimize idle slots ("dead time") for every class.
+2. Minimize idle time within each class's window.
 3. Avoid back-to-back high-intensity events for the same class (e.g., don't
    put conditioning immediately before beam) — make this a configurable
    adjacency-penalty list.
 4. Coaches stay with their assigned class (or event, depending on gym mode).
 
 **Suggested approach:**
-- Discretize the session into slots of `rotationLength` minutes.
+- Discretize each class's window into 5-minute slots.
 - Start with a greedy assignment ordered by class priority, backtracking when
   a class can't be placed.
 - If greedy + backtracking proves insufficient, upgrade to a proper CSP
   solver. Keep the solver a pure, well-tested module with no UI dependencies
   so it can be swapped/upgraded independently.
-- If no valid schedule exists, report *why* (e.g., "Level 3 needs 90 min of
-  events but the session is 75 min") rather than failing silently.
-- Generation should feel instant (<2s) for realistic sizes: ~10 classes, ~8
-  events, ~12 slots.
+- If no valid schedule exists, report *why* against the class's own window
+  ("Silver has 40 min of required events but only a 30-min window") rather
+  than failing silently.
+- Generation should feel instant (<2s) for realistic sizes: ~16 classes, ~8
+  events, a 4-hour window at 5-minute rows.
 
 **Test the solver hard.** Property-based tests: no double-bookings, all
-required events fulfilled, output deterministic given a seed. Include fixture
-scenarios: the impossible session, the exactly-tight session, the trivial
-session.
+required events fulfilled, nothing escapes its class window, output
+deterministic given a seed. Include fixture scenarios: the impossible
+window, the exactly-tight window, the trivial session.
 
 ## Features by Phase
 
@@ -143,10 +201,11 @@ session.
   option that seeds realistic sample data (clearly fictional names) so
   users can explore before entering their own. Sample data must be
   one-click removable.
-- A schedule grid (rows = events, columns = time slots; toggleable to
-  rows = classes) where a schedule can be built/edited **manually** via
-  drag-and-drop or click-to-assign
-- Conflict highlighting in the manual editor (red cell when double-booked)
+- The schedule grid: **classes as columns, time as rows** (5-minute rows),
+  built by placing classes into columns for their own windows and then
+  **drag-painting** events down the rows (see "Building a schedule")
+- Conflict highlighting in the manual editor (overlapping placements in a
+  column; a coach or over-capacity event double-booked across columns)
 - Data persistence
 - Dockerfile + docker-compose.yml working end to end (see Deployment)
 - First-run admin account creation + login (see Authentication)
@@ -164,17 +223,19 @@ model before the solver is built.
 ### Phase 3 — Day-of changes & output
 - Mark a coach absent or an event down → regenerate around locked/kept
   assignments with minimal disruption (prefer schedules close to the original)
-- Print view: clean, black-and-white-friendly, one page per session; big
-  enough to read from across a gym. Also a per-class "where do I go next"
-  strip. Uses the event colors, with a black-and-white-friendly fallback
-  (color plus a pattern or the event name always present in text), since
-  many gyms print in B&W.
+- Print view: clean, black-and-white-friendly, big enough to read from
+  across a gym. Also a per-class "where do I go next" strip. Uses the event
+  colors, with a black-and-white-friendly fallback (the event name is always
+  present in text), since many gyms print in B&W. **Landscape**, and it must
+  handle real width: a session routinely has 16+ classes, so the sheet tiles
+  across pages with the time column repeating on every page.
 - Excel export (shipped early, with the manual grid): download a session's
-  schedule as .xlsx mirroring the on-screen layout — events as columns,
-  time slots as rows, each occupied cell solid-filled with its event's
-  color, class and coach names in the cell, and white/black text chosen
+  schedule as .xlsx mirroring the on-screen layout — **classes as columns,
+  time as rows**, each occupied cell solid-filled with its event's color,
+  event and coach names in the cell, and white/black text chosen
   automatically from the fill's brightness so it stays readable when
-  printed from Excel.
+  printed from Excel. Set up to print landscape and tile across pages with
+  the header row and time column repeating.
 - Copy a session onto a new date — the weekly workflow: last Monday's
   practice becomes this Monday's, schedule and all
 
@@ -260,6 +321,11 @@ simple and single-gym:
 
 - The schedule grid is the product. Invest there: readable at a glance,
   color-coded by event, dense but not cramped.
+- **It has to hold up at real size.** A session routinely runs 16+ classes
+  across a 3–4 hour window at 5-minute rows — 35–45+ rows by 16+ columns.
+  The class headers and the time column stay stuck while scrolling both
+  ways, event names stay legible without truncation, and dragging never
+  lags.
 - Coaches use this poolside-style — chalky hands, phone or a printout.
   Big touch targets, works on a phone screen, prints cleanly.
 - **Light and dark mode**, switched from a button in the header (sun = light,

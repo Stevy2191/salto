@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { EVENT_PALETTE } from '../shared/colors.ts'
 import { addDays, dayOfWeekOf, todayIsoDate } from '../shared/dates.ts'
+import { parseTime } from '../shared/slots.ts'
 
 // Schema changes are append-only migrations tracked via PRAGMA user_version.
 // NEVER edit an existing migration — deployed databases have already run it.
@@ -176,6 +177,143 @@ ALTER TABLE events_new RENAME TO events;
         update.run(addDays(today, (row.day_of_week - todayDow + 7) % 7), row.id)
       }
       db.exec('ALTER TABLE sessions DROP COLUMN day_of_week')
+    },
+  },
+  {
+    // The lane model. A session's grid becomes columns; each column holds a
+    // vertical sequence of class placements, each with its own window; each
+    // placement holds explicit event blocks.
+    //
+    // Converting the old model: every class that attended a session becomes
+    // a full-window placement in its own column (the old grid effectively
+    // ran every class for the whole session), and its per-slot assignments
+    // become blocks — consecutive slots on the same event and coach merge
+    // into one block, which is exactly how the old grid already rendered
+    // and exported them.
+    name: 'lane-model',
+    up: (db) => {
+      db.exec(`
+CREATE TABLE placements (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  class_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+  column_index INTEGER NOT NULL,
+  start_min INTEGER NOT NULL,
+  end_min INTEGER NOT NULL
+);
+
+CREATE TABLE event_blocks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  placement_id INTEGER NOT NULL REFERENCES placements(id) ON DELETE CASCADE,
+  event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  coach_id INTEGER REFERENCES coaches(id) ON DELETE SET NULL,
+  start_min INTEGER NOT NULL,
+  end_min INTEGER NOT NULL,
+  locked INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX idx_placements_session ON placements(session_id);
+CREATE INDEX idx_blocks_placement ON event_blocks(placement_id);
+`)
+      db.exec('ALTER TABLE sessions ADD COLUMN column_count INTEGER NOT NULL DEFAULT 0')
+
+      const sessions = db
+        .prepare('SELECT id, start_time, end_time, rotation_length, groups FROM sessions')
+        .all() as {
+        id: number
+        start_time: string
+        end_time: string
+        rotation_length: number
+        groups: string
+      }[]
+      const insertPlacement = db.prepare(
+        'INSERT INTO placements (session_id, class_id, column_index, start_min, end_min) VALUES (?, ?, ?, ?, ?)',
+      )
+      const insertBlock = db.prepare(
+        'INSERT INTO event_blocks (placement_id, event_id, coach_id, start_min, end_min, locked) VALUES (?, ?, ?, ?, ?, ?)',
+      )
+      const setColumnCount = db.prepare('UPDATE sessions SET column_count = ? WHERE id = ?')
+      const classExists = db.prepare('SELECT 1 AS x FROM groups WHERE id = ?')
+
+      for (const session of sessions) {
+        const startMin = parseTime(session.start_time) ?? 0
+        const endMin = parseTime(session.end_time) ?? startMin
+        // A class only becomes a placement if it still exists — older rows
+        // could reference a since-deleted class.
+        const classIds = (JSON.parse(session.groups) as number[]).filter((id) =>
+          classExists.get(id),
+        )
+        // Assignments may also name classes that were dropped from the
+        // session's list but still hold cells; keep their work.
+        const assigned = db
+          .prepare(
+            'SELECT DISTINCT group_id FROM assignments WHERE session_id = ? ORDER BY group_id',
+          )
+          .all(session.id) as { group_id: number }[]
+        for (const row of assigned) {
+          if (!classIds.includes(row.group_id) && classExists.get(row.group_id)) {
+            classIds.push(row.group_id)
+          }
+        }
+
+        classIds.forEach((classId, index) => {
+          const placementId = Number(
+            insertPlacement.run(session.id, classId, index, startMin, endMin).lastInsertRowid,
+          )
+          // Merge consecutive same-event, same-coach slots into blocks.
+          const cells = db
+            .prepare(
+              'SELECT slot_index, event_id, coach_id, locked FROM assignments WHERE session_id = ? AND group_id = ? ORDER BY slot_index',
+            )
+            .all(session.id, classId) as {
+            slot_index: number
+            event_id: number
+            coach_id: number | null
+            locked: number
+          }[]
+          let run: {
+            eventId: number
+            coachId: number | null
+            locked: number
+            startMin: number
+            endMin: number
+          } | null = null
+          const flush = () => {
+            if (run) insertBlock.run(placementId, run.eventId, run.coachId, run.startMin, run.endMin, run.locked)
+            run = null
+          }
+          for (const cell of cells) {
+            const cellStart = startMin + cell.slot_index * session.rotation_length
+            const cellEnd = cellStart + session.rotation_length
+            if (
+              run &&
+              run.eventId === cell.event_id &&
+              run.coachId === cell.coach_id &&
+              run.locked === cell.locked &&
+              run.endMin === cellStart
+            ) {
+              run.endMin = cellEnd
+              continue
+            }
+            flush()
+            run = {
+              eventId: cell.event_id,
+              coachId: cell.coach_id,
+              locked: cell.locked,
+              startMin: cellStart,
+              endMin: cellEnd,
+            }
+          }
+          flush()
+        })
+        setColumnCount.run(classIds.length, session.id)
+      }
+
+      // Superseded: attendance is now expressed by placements, the grid is
+      // always 5-minute rows, and cells are now blocks.
+      db.exec('DROP TABLE assignments')
+      db.exec('ALTER TABLE sessions DROP COLUMN groups')
+      db.exec('ALTER TABLE sessions DROP COLUMN rotation_length')
     },
   },
 ]
