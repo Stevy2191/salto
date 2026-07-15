@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import type { Coach, GymEvent } from '../../shared/types.ts'
-import { DAY_NAMES, apiDelete, apiGet, apiPost, apiPut } from '../lib/api.ts'
+import { DAY_NAMES } from '../../shared/dates.ts'
+import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api.ts'
 import { useLoad } from '../lib/useLoad.ts'
 import {
   Button,

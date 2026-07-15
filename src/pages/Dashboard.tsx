@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { Coach, GymClass, GymEvent, Session } from '../../shared/types.ts'
-import { DAY_NAMES, apiDelete, apiGet, apiPost } from '../lib/api.ts'
+import { formatDateLong } from '../../shared/dates.ts'
+import { apiDelete, apiGet, apiPost } from '../lib/api.ts'
 import { useLoad } from '../lib/useLoad.ts'
 import { Button, Card, EmptyNote, ErrorNote, PageHeader } from '../components/ui.tsx'
-import { sessionLabel } from './SessionsPage.tsx'
+import { sessionLabel } from '../lib/sessions.ts'
 import { SETUP_STEPS } from './SetupWizard.tsx'
 
 interface Overview {
@@ -175,7 +176,7 @@ export function Dashboard() {
                   <div className="flex-1">
                     <span className="font-medium text-slate-900">{sessionLabel(session)}</span>
                     <p className="text-sm text-slate-500">
-                      {DAY_NAMES[session.dayOfWeek]} {session.startTime}–{session.endTime} ·{' '}
+                      {formatDateLong(session.date)} · {session.startTime}–{session.endTime} ·{' '}
                       {session.classes.length} class{session.classes.length === 1 ? '' : 'es'}
                     </p>
                   </div>

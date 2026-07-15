@@ -1,13 +1,15 @@
 import { useState } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import type { Coach, GymClass, GymEvent, Session } from '../../shared/types.ts'
+import { todayIsoDate } from '../../shared/dates.ts'
 import { apiDelete, apiGet, apiPost } from '../lib/api.ts'
 import { useLoad } from '../lib/useLoad.ts'
 import { Button, Card, ErrorNote } from '../components/ui.tsx'
 import { EventForm } from './EventsPage.tsx'
 import { ClassForm } from './ClassesPage.tsx'
 import { CoachForm } from './CoachesPage.tsx'
-import { SessionForm, sessionLabel } from './SessionsPage.tsx'
+import { SessionForm } from './SessionsPage.tsx'
+import { sessionLabel } from '../lib/sessions.ts'
 
 // Single source of truth for the guided setup steps — the dashboard
 // checklist links into these wizard routes.
@@ -34,7 +36,7 @@ export const SETUP_STEPS = [
     slug: 'session',
     short: 'First session',
     title: 'Create your first session',
-    detail: 'A practice block with its time window and attending classes.',
+    detail: 'One practice on one date, with its time window and classes.',
   },
 ] as const
 
@@ -190,13 +192,13 @@ export function SetupWizard() {
         return (
           <>
             <p className="text-sm text-slate-600">
-              A session is one practice block. Your classes are pre-selected — save it and
-              you're done.
+              A session is one practice on one date. Your classes are pre-selected — save it
+              and you're done. Next week, copy it onto the new date rather than starting over.
             </p>
             <SessionForm
               initial={{
                 name: '',
-                dayOfWeek: 1,
+                date: todayIsoDate(),
                 startTime: '16:00',
                 endTime: '18:00',
                 rotationLength: 15,

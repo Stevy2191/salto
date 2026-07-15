@@ -2,11 +2,12 @@ import { Link, useParams } from 'react-router-dom'
 import type { Assignment, Coach, GymClass, GymEvent, Session } from '../../shared/types.ts'
 import { slotCount, slotStart } from '../../shared/slots.ts'
 import { textColorFor } from '../../shared/colors.ts'
-import { DAY_NAMES, apiGet } from '../lib/api.ts'
+import { formatDateLong } from '../../shared/dates.ts'
+import { apiGet } from '../lib/api.ts'
 import { useLoad } from '../lib/useLoad.ts'
 import { classBlocks } from '../lib/blocks.ts'
 import { Button, ErrorNote } from '../components/ui.tsx'
-import { sessionLabel } from './SessionsPage.tsx'
+import { sessionLabel } from '../lib/sessions.ts'
 
 // Print-optimized session schedule: By classes block layout with the same
 // event colors as the Excel export, plus per-class "where do I go next"
@@ -83,7 +84,7 @@ export function PrintPage() {
 
       <h1 className="text-2xl font-black text-black">{sessionLabel(session)}</h1>
       <p className="text-sm font-medium text-slate-700">
-        {DAY_NAMES[session.dayOfWeek]} · {session.startTime}–{session.endTime} ·{' '}
+        {formatDateLong(session.date)} · {session.startTime}–{session.endTime} ·{' '}
         {session.rotationLength}-minute rotations
       </p>
 

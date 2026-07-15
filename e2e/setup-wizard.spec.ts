@@ -64,11 +64,14 @@ test('first run: admin setup, then the setup wizard through to the grid', async 
   await expect(page.getByRole('button', { name: /next/i })).toBeEnabled()
   await page.getByRole('button', { name: /next/i }).click()
 
-  // Step 4 — first session. Classes come pre-selected; Finish is gated.
+  // Step 4 — first session on a specific date. Classes come pre-selected;
+  // Finish is gated.
   await expect(page).toHaveURL(/\/guide\/session$/)
   await expect(page.getByText('Step 4 of 4')).toBeVisible()
   await expect(page.getByRole('button', { name: /finish/i })).toBeDisabled()
   await page.getByLabel(/session name/i).fill('Monday Practice')
+  await page.getByLabel('Date').fill('2026-03-02')
+  await expect(page.getByText('Monday, March 2, 2026')).toBeVisible()
   await page.getByRole('button', { name: 'Save' }).click()
   await expect(page.getByRole('button', { name: /finish/i })).toBeEnabled()
   await page.getByRole('button', { name: /finish/i }).click()
@@ -120,26 +123,44 @@ test('print view renders the block layout and class strips', async ({ page }) =>
   await login(page)
   await page.goto('/sessions/1/print')
   await expect(page.getByRole('heading', { name: 'Monday Practice' })).toBeVisible()
+  // The header names the specific date, not just a weekday.
+  await expect(page.getByText(/Monday, March 2, 2026/)).toBeVisible()
   await expect(page.getByRole('columnheader', { name: 'Level 3 Girls' })).toBeVisible()
   await expect(page.getByText('Where do I go next?')).toBeVisible()
   await expect(page.getByText(/16:00 Vault/)).toBeVisible()
   await expect(page.getByRole('button', { name: 'Print this page' })).toBeVisible()
 })
 
-test('copy session carries the schedule to a new day', async ({ page }) => {
+test('copy session carries the schedule to next week, defaulting a week out', async ({ page }) => {
   await login(page)
   await page.goto('/sessions/1/schedule')
   await page.getByRole('button', { name: 'Copy session' }).click()
 
-  await page.getByLabel('Day').selectOption('4') // Thursday
-  await page.getByLabel('Starts').fill('17:00')
+  // The weekly workflow: default the copy to the same weekday, one week on.
+  await expect(page.getByLabel('New date')).toHaveValue('2026-03-09')
+  await expect(page.getByText('Monday, March 9, 2026')).toBeVisible()
   await page.getByRole('button', { name: 'Create copy' }).click()
 
-  await expect(
-    page.getByRole('heading', { name: 'Monday Practice (copy)' }),
-  ).toBeVisible()
-  await expect(page).toHaveURL(/\/sessions\/\d+\/schedule$/)
-  expect(page.url()).not.toContain('/sessions/1/')
+  // Lands on the copy — a different session id, on the new date.
+  await expect(page).toHaveURL(/\/sessions\/(?!1\/)\d+\/schedule$/)
+  await expect(page.getByText(/Monday, March 9, 2026/)).toBeVisible()
   // The copied schedule came along.
   await expect(page.getByText('Level 3 Girls').first()).toBeVisible()
+})
+
+test('sessions list shows dates chronologically and copies from there too', async ({ page }) => {
+  await login(page)
+  await page.goto('/sessions')
+
+  // Both practices are listed, earliest first.
+  const dates = page.locator('li p')
+  await expect(dates.first()).toContainText('Monday, March 2, 2026')
+  await expect(dates.nth(1)).toContainText('Monday, March 9, 2026')
+
+  // Copy is available straight from the list — the weekly workflow.
+  await page.getByRole('button', { name: 'Copy' }).first().click()
+  await page.getByLabel('New date').fill('2026-03-16')
+  await page.getByRole('button', { name: 'Create copy' }).click()
+  await expect(page).toHaveURL(/\/sessions\/\d+\/schedule$/)
+  await expect(page.getByText(/Monday, March 16, 2026/)).toBeVisible()
 })

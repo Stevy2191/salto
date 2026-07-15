@@ -73,7 +73,7 @@ beforeEach(async () => {
       .set('Cookie', cookie)
       .send({
         name: 'Monday Practice',
-        dayOfWeek: 1,
+        date: '2026-03-02',
         startTime: '16:00',
         endTime: '17:00',
         rotationLength: 15,
@@ -109,7 +109,8 @@ describe('Excel export', () => {
     expect(res.headers['content-disposition']).toContain('salto-monday-practice.xlsx')
 
     expect(sheet.getCell('A1').value).toBe('Monday Practice')
-    expect(String(sheet.getCell('A2').value)).toContain('Monday · 16:00–17:00')
+    // The subtitle names the specific date, not just the weekday.
+    expect(String(sheet.getCell('A2').value)).toContain('Monday, March 2, 2026 · 16:00–17:00')
 
     // Class header row: names in bold on the yellow highlight.
     expect(sheet.getCell('B3').value).toBe('Level 3 Girls')

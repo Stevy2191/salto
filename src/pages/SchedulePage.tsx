@@ -2,14 +2,14 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import type { Assignment, Coach, GymClass, GymEvent, Session, Settings } from '../../shared/types.ts'
 import { slotCount, slotStart } from '../../shared/slots.ts'
-import { DAY_NAMES, apiGet, apiPut } from '../lib/api.ts'
+import { formatDateLong } from '../../shared/dates.ts'
+import { apiGet, apiPut } from '../lib/api.ts'
 import { useLoad } from '../lib/useLoad.ts'
 import { CONFLICT_LABELS, assignmentKey, findConflicts } from '../lib/conflicts.ts'
 import { classColor } from '../lib/colors.ts'
 import { textColorFor } from '../../shared/colors.ts'
 import { generateSchedule } from '../solver/solver.ts'
 import { describeRepairChanges, repairSchedule } from '../solver/repair.ts'
-import { apiPost } from '../lib/api.ts'
 import {
   Button,
   Card,
@@ -19,87 +19,9 @@ import {
   FieldGroup,
   PageHeader,
   Select,
-  TextInput,
 } from '../components/ui.tsx'
-import { sessionLabel } from './SessionsPage.tsx'
-
-function CopySessionDialog({
-  session,
-  onClose,
-  onCopied,
-}: {
-  session: Session
-  onClose: () => void
-  onCopied: (newSessionId: number) => void
-}) {
-  const [name, setName] = useState(`${sessionLabel(session)} (copy)`)
-  const [dayOfWeek, setDayOfWeek] = useState((session.dayOfWeek + 1) % 7)
-  const [startTime, setStartTime] = useState(session.startTime)
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-
-  const create = async () => {
-    setBusy(true)
-    try {
-      const res = await apiPost<{ session: Session }>(`/api/sessions/${session.id}/copy`, {
-        name,
-        dayOfWeek,
-        startTime,
-      })
-      onCopied(res.session.id)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'copy failed')
-      setBusy(false)
-    }
-  }
-
-  return (
-    <div
-      className="fixed inset-0 z-10 flex items-end justify-center bg-black/30 p-4 sm:items-center"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-sm space-y-3 rounded-xl bg-white p-4 shadow-lg"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h2 className="font-semibold text-slate-900">Copy this session</h2>
-        <p className="text-sm text-slate-600">
-          Same classes, rotation length, duration, and schedule — pick when it happens. Copied
-          assignments arrive unlocked.
-        </p>
-        <ErrorNote message={error} />
-        <Field label="Name">
-          <TextInput value={name} onChange={(e) => setName(e.target.value)} />
-        </Field>
-        <Field label="Day">
-          <Select value={dayOfWeek} onChange={(e) => setDayOfWeek(Number(e.target.value))}>
-            {DAY_NAMES.map((day, i) => (
-              <option key={i} value={i}>
-                {day}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="Starts">
-          <TextInput
-            type="time"
-            value={startTime}
-            onChange={(e) => setStartTime(e.target.value)}
-            required
-          />
-        </Field>
-        <div className="flex gap-2">
-          <Button disabled={busy} onClick={() => void create()}>
-            Create copy
-          </Button>
-          <Button variant="secondary" onClick={onClose}>
-            Cancel
-          </Button>
-        </div>
-      </div>
-    </div>
-  )
-}
+import { CopySessionDialog } from '../components/CopySessionDialog.tsx'
+import { sessionLabel } from '../lib/sessions.ts'
 
 type SaveState = 'saved' | 'saving' | 'error'
 type ViewMode = 'events' | 'classes'
@@ -714,8 +636,8 @@ export function SchedulePage() {
           </>
         )}
         <p className="text-sm text-slate-500">
-          {DAY_NAMES[session.dayOfWeek]} {session.startTime}–{session.endTime} · {slots} rotations
-          of {session.rotationLength} min
+          {formatDateLong(session.date)} · {session.startTime}–{session.endTime} · {slots}{' '}
+          rotations of {session.rotationLength} min
           {conflictCount > 0 && (
             <span className="ml-2 font-medium text-red-600">
               ⚠ {conflictCount} conflicting assignment{conflictCount === 1 ? '' : 's'}

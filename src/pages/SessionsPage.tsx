@@ -1,10 +1,13 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import type { GymClass, Session } from '../../shared/types.ts'
 import { slotCount } from '../../shared/slots.ts'
-import { DAY_NAMES, apiDelete, apiGet, apiPost, apiPut } from '../lib/api.ts'
+import { formatDateLong, todayIsoDate } from '../../shared/dates.ts'
+import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api.ts'
 import { useLoad } from '../lib/useLoad.ts'
+import { sessionLabel } from '../lib/sessions.ts'
+import { CopySessionDialog } from '../components/CopySessionDialog.tsx'
 import {
   Button,
   Card,
@@ -14,13 +17,13 @@ import {
   Field,
   FieldGroup,
   PageHeader,
-  Select,
   TextInput,
 } from '../components/ui.tsx'
 
 export interface SessionFormValues {
   name: string
-  dayOfWeek: number
+  /** "YYYY-MM-DD" — the specific day this practice happens. */
+  date: string
   startTime: string
   endTime: string
   rotationLength: number
@@ -67,14 +70,13 @@ export function SessionForm({
             placeholder="e.g. Monday Team Practice"
           />
         </Field>
-        <Field label="Day">
-          <Select value={values.dayOfWeek} onChange={(e) => set('dayOfWeek', Number(e.target.value))}>
-            {DAY_NAMES.map((day, i) => (
-              <option key={i} value={i}>
-                {day}
-              </option>
-            ))}
-          </Select>
+        <Field label="Date" hint={values.date ? formatDateLong(values.date) : undefined}>
+          <TextInput
+            type="date"
+            value={values.date}
+            onChange={(e) => set('date', e.target.value)}
+            required
+          />
         </Field>
         <Field label="Starts">
           <TextInput
@@ -123,14 +125,12 @@ export function SessionForm({
   )
 }
 
-export function sessionLabel(session: Session): string {
-  return session.name || `${DAY_NAMES[session.dayOfWeek]} ${session.startTime}`
-}
-
 export function SessionsPage() {
+  const navigate = useNavigate()
   const sessionsLoad = useLoad(() => apiGet<{ sessions: Session[] }>('/api/sessions'))
   const classesLoad = useLoad(() => apiGet<{ classes: GymClass[] }>('/api/classes'))
   const [editingId, setEditingId] = useState<number | null>(null)
+  const [copying, setCopying] = useState<Session | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
 
   const sessions = sessionsLoad.data?.sessions ?? []
@@ -149,7 +149,7 @@ export function SessionsPage() {
 
   const emptyForm: SessionFormValues = {
     name: '',
-    dayOfWeek: 1,
+    date: todayIsoDate(),
     startTime: '16:00',
     endTime: '18:00',
     rotationLength: 15,
@@ -200,7 +200,7 @@ export function SessionsPage() {
                     </span>
                   )}
                   <p className="text-sm text-slate-500">
-                    {DAY_NAMES[session.dayOfWeek]} {session.startTime}–{session.endTime} ·{' '}
+                    {formatDateLong(session.date)} · {session.startTime}–{session.endTime} ·{' '}
                     {slotCount(session)} rotations of {session.rotationLength} min ·{' '}
                     {session.classes.length} class{session.classes.length === 1 ? '' : 'es'}
                   </p>
@@ -211,6 +211,9 @@ export function SessionsPage() {
                 >
                   Schedule
                 </Link>
+                <Button variant="secondary" onClick={() => setCopying(session)}>
+                  Copy
+                </Button>
                 <Button variant="secondary" onClick={() => setEditingId(session.id)}>
                   Edit
                 </Button>
@@ -222,6 +225,13 @@ export function SessionsPage() {
           )}
         </ul>
       </Card>
+      {copying && (
+        <CopySessionDialog
+          session={copying}
+          onClose={() => setCopying(null)}
+          onCopied={(newId) => navigate(`/sessions/${newId}/schedule`)}
+        />
+      )}
     </div>
   )
 }

@@ -3,17 +3,8 @@ import ExcelJS from 'exceljs'
 import type { DatabaseSync } from 'node:sqlite'
 import { slotCount, slotStart } from '../../shared/slots.ts'
 import { textColorFor } from '../../shared/colors.ts'
+import { formatDateLong, formatDateShort } from '../../shared/dates.ts'
 import { ApiError, idParam } from '../validate.ts'
-
-const DAY_NAMES = [
-  'Sunday',
-  'Monday',
-  'Tuesday',
-  'Wednesday',
-  'Thursday',
-  'Friday',
-  'Saturday',
-] as const
 
 // Styling matched to the reference sheet (hand-made gym schedule photo):
 // bright yellow class header, medium-gray time column, thin black gridlines
@@ -27,7 +18,7 @@ const medium = { style: 'medium' as const }
 interface SessionRow {
   id: number
   name: string
-  day_of_week: number
+  date: string
   start_time: string
   end_time: string
   rotation_length: number
@@ -124,7 +115,7 @@ export function exportRoutes(db: DatabaseSync): Router {
     const sessionId = idParam(req.params.id)
     const session = db
       .prepare(
-        'SELECT id, name, day_of_week, start_time, end_time, rotation_length, groups FROM sessions WHERE id = ?',
+        'SELECT id, name, date, start_time, end_time, rotation_length, groups FROM sessions WHERE id = ?',
       )
       .get(sessionId) as unknown as SessionRow | undefined
     if (!session) throw new ApiError(404, 'session not found')
@@ -134,7 +125,7 @@ export function exportRoutes(db: DatabaseSync): Router {
       endTime: session.end_time,
       rotationLength: session.rotation_length,
     }
-    const label = session.name || `${DAY_NAMES[session.day_of_week]} ${session.start_time}`
+    const label = session.name || `${formatDateShort(session.date)} ${session.start_time}`
 
     const assignments = db
       .prepare(
@@ -185,7 +176,7 @@ export function exportRoutes(db: DatabaseSync): Router {
 
     sheet.mergeCells(2, 1, 2, columnCount)
     const subtitle = sheet.getCell(2, 1)
-    subtitle.value = `${DAY_NAMES[session.day_of_week]} · ${session.start_time}–${session.end_time} · ${session.rotation_length}-minute rotations`
+    subtitle.value = `${formatDateLong(session.date)} · ${session.start_time}–${session.end_time} · ${session.rotation_length}-minute rotations`
     subtitle.font = { size: 11, color: { argb: 'FF555555' } }
 
     // Row 3: class names, bold on a yellow highlight.

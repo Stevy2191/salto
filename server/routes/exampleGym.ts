@@ -3,6 +3,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import { ApiError } from '../validate.ts'
 import { withTransaction } from '../tx.ts'
 import { EVENT_PALETTE } from '../../shared/colors.ts'
+import { addDays, dayOfWeekOf, todayIsoDate } from '../../shared/dates.ts'
 
 // Clearly fictional sample data so a new gym can explore the app before
 // entering its own. Every row is flagged is_sample so it can be removed
@@ -114,9 +115,30 @@ function seed(db: DatabaseSync): void {
     )
   }
 
-  db.prepare(
-    'INSERT INTO sessions (name, day_of_week, start_time, end_time, rotation_length, groups, is_sample) VALUES (?, ?, ?, ?, ?, ?, 1)',
-  ).run('Monday Team Practice', 1, '16:00', '18:30', 15, JSON.stringify(classIds))
+  // Sessions are per-date. Seed the next Monday and Wednesday from today so
+  // the sample gym always shows upcoming practices, never stale ones.
+  const insertSession = db.prepare(
+    'INSERT INTO sessions (name, date, start_time, end_time, rotation_length, groups, is_sample) VALUES (?, ?, ?, ?, ?, ?, 1)',
+  )
+  const today = todayIsoDate()
+  const todayDow = dayOfWeekOf(today)
+  const nextWeekday = (dow: number) => addDays(today, (dow - todayDow + 7) % 7)
+  insertSession.run(
+    'Monday Team Practice',
+    nextWeekday(1),
+    '16:00',
+    '18:30',
+    15,
+    JSON.stringify(classIds),
+  )
+  insertSession.run(
+    'Wednesday Team Practice',
+    nextWeekday(3),
+    '16:00',
+    '18:30',
+    15,
+    JSON.stringify(classIds),
+  )
 }
 
 export function exampleGymRoutes(db: DatabaseSync): Router {

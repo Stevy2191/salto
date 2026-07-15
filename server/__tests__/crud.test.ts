@@ -236,7 +236,7 @@ describe('classes CRUD', () => {
       await request(app)
         .post('/api/sessions')
         .set('Cookie', cookie)
-        .send({ dayOfWeek: 1, startTime: '16:00', endTime: '18:00', classes: [cls.id] })
+        .send({ date: '2026-03-02', startTime: '16:00', endTime: '18:00', classes: [cls.id] })
     ).body.session
 
     await request(app).delete(`/api/classes/${cls.id}`).set('Cookie', cookie).expect(204)
@@ -250,10 +250,10 @@ describe('sessions CRUD', () => {
     const created = await request(app)
       .post('/api/sessions')
       .set('Cookie', cookie)
-      .send({ dayOfWeek: 1, startTime: '16:00', endTime: '18:30' })
+      .send({ date: '2026-03-02', startTime: '16:00', endTime: '18:30' })
       .expect(201)
     expect(created.body.session).toMatchObject({
-      dayOfWeek: 1,
+      date: '2026-03-02',
       startTime: '16:00',
       endTime: '18:30',
       rotationLength: 15,
@@ -261,11 +261,41 @@ describe('sessions CRUD', () => {
     })
   })
 
+  it('rejects a missing or unreal date', async () => {
+    for (const date of [undefined, '', 'Monday', '2026-3-2', '2026-02-31']) {
+      await request(app)
+        .post('/api/sessions')
+        .set('Cookie', cookie)
+        .send({ date, startTime: '16:00', endTime: '18:30' })
+        .expect(400)
+    }
+  })
+
+  it('lists sessions chronologically, not by creation order', async () => {
+    const create = (date: string, startTime: string) =>
+      request(app)
+        .post('/api/sessions')
+        .set('Cookie', cookie)
+        .send({ date, startTime, endTime: '20:00' })
+        .expect(201)
+    // Deliberately out of order, including two on the same day.
+    await create('2026-03-09', '16:00')
+    await create('2026-03-02', '17:00')
+    await create('2026-03-02', '09:00')
+
+    const listed = (await request(app).get('/api/sessions').set('Cookie', cookie)).body.sessions
+    expect(listed.map((s: { date: string; startTime: string }) => [s.date, s.startTime])).toEqual([
+      ['2026-03-02', '09:00'],
+      ['2026-03-02', '17:00'],
+      ['2026-03-09', '16:00'],
+    ])
+  })
+
   it('accepts any 5-minute multiple as rotation length', async () => {
     const created = await request(app)
       .post('/api/sessions')
       .set('Cookie', cookie)
-      .send({ dayOfWeek: 2, startTime: '17:00', endTime: '19:05', rotationLength: 25 })
+      .send({ date: '2026-03-03', startTime: '17:00', endTime: '19:05', rotationLength: 25 })
       .expect(201)
     expect(created.body.session.rotationLength).toBe(25)
   })
@@ -274,7 +304,7 @@ describe('sessions CRUD', () => {
     await request(app)
       .post('/api/sessions')
       .set('Cookie', cookie)
-      .send({ dayOfWeek: 2, startTime: '17:00', endTime: '19:00', rotationLength: 17 })
+      .send({ date: '2026-03-03', startTime: '17:00', endTime: '19:00', rotationLength: 17 })
       .expect(400)
   })
 
@@ -283,7 +313,7 @@ describe('sessions CRUD', () => {
       await request(app)
         .post('/api/sessions')
         .set('Cookie', cookie)
-        .send({ dayOfWeek: 1, startTime: '16:00', endTime: '18:00' })
+        .send({ date: '2026-03-02', startTime: '16:00', endTime: '18:00' })
     ).body.session
     expect(session.absentCoaches).toEqual([])
     expect(session.unavailableEvents).toEqual([])
@@ -300,7 +330,7 @@ describe('sessions CRUD', () => {
     await request(app)
       .put(`/api/sessions/${session.id}`)
       .set('Cookie', cookie)
-      .send({ name: 'Renamed', dayOfWeek: 2, startTime: '16:00', endTime: '18:00' })
+      .send({ name: 'Renamed', date: '2026-03-03', startTime: '16:00', endTime: '18:00' })
       .expect(200)
     const after = await request(app).get(`/api/sessions/${session.id}`).set('Cookie', cookie)
     expect(after.body.session.absentCoaches).toEqual([3])
@@ -320,7 +350,7 @@ describe('sessions CRUD', () => {
         .set('Cookie', cookie)
         .send({
           name: 'Monday',
-          dayOfWeek: 1,
+          date: '2026-03-02',
           startTime: '16:00',
           endTime: '18:30',
           rotationLength: 30,
@@ -342,13 +372,13 @@ describe('sessions CRUD', () => {
       await request(app)
         .post(`/api/sessions/${source.id}/copy`)
         .set('Cookie', cookie)
-        .send({ name: 'Thursday', dayOfWeek: 4, startTime: '17:00' })
+        .send({ name: 'Thursday', date: '2026-03-05', startTime: '17:00' })
         .expect(201)
     ).body.session
-    // Same duration and rotation, chosen day/time, same classes, no outages.
+    // Same duration and rotation, chosen date/time, same classes, no outages.
     expect(copy).toMatchObject({
       name: 'Thursday',
-      dayOfWeek: 4,
+      date: '2026-03-05',
       startTime: '17:00',
       endTime: '19:30',
       rotationLength: 30,
@@ -370,12 +400,12 @@ describe('sessions CRUD', () => {
       await request(app)
         .post('/api/sessions')
         .set('Cookie', cookie)
-        .send({ dayOfWeek: 1, startTime: '16:00', endTime: '20:00' })
+        .send({ date: '2026-03-02', startTime: '16:00', endTime: '20:00' })
     ).body.session
     await request(app)
       .post(`/api/sessions/${source.id}/copy`)
       .set('Cookie', cookie)
-      .send({ dayOfWeek: 2, startTime: '21:00' })
+      .send({ date: '2026-03-03', startTime: '21:00' })
       .expect(400)
   })
 
@@ -383,12 +413,12 @@ describe('sessions CRUD', () => {
     await request(app)
       .post('/api/sessions')
       .set('Cookie', cookie)
-      .send({ dayOfWeek: 1, startTime: '18:00', endTime: '16:00' })
+      .send({ date: '2026-03-02', startTime: '18:00', endTime: '16:00' })
       .expect(400)
     await request(app)
       .post('/api/sessions')
       .set('Cookie', cookie)
-      .send({ dayOfWeek: 1, startTime: '4pm', endTime: '18:00' })
+      .send({ date: '2026-03-02', startTime: '4pm', endTime: '18:00' })
       .expect(400)
   })
 })

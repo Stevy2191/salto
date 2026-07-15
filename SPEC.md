@@ -67,10 +67,19 @@ storage keeps the original `groups` table name behind the server's mappers.
   coaches by event instead; support both via a setting)
 
 ### Session (practice block)
-- `dayOfWeek`, `startTime`, `endTime`
+- `date` — the **specific calendar day** this practice happens (e.g.
+  Monday, March 3), not a generic weekly slot: Monday week 1 differs from
+  Monday week 2, and Monday differs from Tuesday. Session lists are sorted
+  chronologically.
+- `startTime`, `endTime`
 - `classes` — which classes attend
 - `rotationLength` — base time slot granularity (e.g., 15 min increments);
   event durations are multiples of this
+
+Repeating a practice week to week is **copying a session onto a new date**
+(the copy prompts for it, defaulting a week out) — that is the primary
+weekly workflow, not a recurrence rule. Recurring templates remain a
+nice-to-have (see below).
 
 ### Schedule (generated output)
 - For each time slot × event: which class is there, which coach is there
@@ -166,7 +175,8 @@ model before the solver is built.
   color, class and coach names in the cell, and white/black text chosen
   automatically from the fill's brightness so it stays readable when
   printed from Excel.
-- Copy a previous session's schedule as a starting point
+- Copy a session onto a new date — the weekly workflow: last Monday's
+  practice becomes this Monday's, schedule and all
 
 ### Later / nice-to-have (not v1)
 - Coach login and read-only sharing links

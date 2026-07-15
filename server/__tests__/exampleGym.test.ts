@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import request from 'supertest'
 import type { Express } from 'express'
 import type { GymClass, GymEvent, Session } from '../../shared/types.ts'
+import { isIsoDate, todayIsoDate } from '../../shared/dates.ts'
 import { appWithAdmin } from './helpers.ts'
 
 let app: Express
@@ -26,11 +27,20 @@ describe('example gym', () => {
 
     expect(events.length).toBeGreaterThanOrEqual(5)
     expect(classes.length).toBeGreaterThanOrEqual(3)
-    expect(sessions).toHaveLength(1)
+    expect(sessions).toHaveLength(2)
     expect(events.every((e) => e.isSample)).toBe(true)
 
+    // Sample events mix limited and unlimited capacities.
+    expect(events.some((e) => e.capacity === null)).toBe(true)
+    expect(events.some((e) => e.capacity !== null)).toBe(true)
+
+    // Sessions sit on real, upcoming dates, listed chronologically.
+    const today = todayIsoDate()
+    expect(sessions.every((s) => isIsoDate(s.date) && s.date >= today)).toBe(true)
+    expect([...sessions].sort((a, b) => a.date.localeCompare(b.date))).toEqual(sessions)
+
     // Referential integrity: classes only require seeded events,
-    // the session only contains seeded classes.
+    // every session only contains seeded classes.
     const eventIds = new Set(events.map((e) => e.id))
     for (const cls of classes) {
       for (const req of cls.requiredEvents) {
@@ -42,8 +52,10 @@ describe('example gym', () => {
       }
     }
     const classIds = new Set(classes.map((c) => c.id))
-    for (const gid of sessions[0]!.classes) {
-      expect(classIds.has(gid)).toBe(true)
+    for (const session of sessions) {
+      for (const gid of session.classes) {
+        expect(classIds.has(gid)).toBe(true)
+      }
     }
   })
 

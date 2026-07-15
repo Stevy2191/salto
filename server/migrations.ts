@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { EVENT_PALETTE } from '../shared/colors.ts'
+import { addDays, dayOfWeekOf, todayIsoDate } from '../shared/dates.ts'
 
 // Schema changes are append-only migrations tracked via PRAGMA user_version.
 // NEVER edit an existing migration — deployed databases have already run it.
@@ -154,6 +155,27 @@ ALTER TABLE events_new RENAME TO events;
       } finally {
         db.exec('PRAGMA foreign_keys = ON')
       }
+    },
+  },
+  {
+    // Sessions become calendar-specific: a concrete date ("YYYY-MM-DD")
+    // replaces the generic weekly day_of_week. Existing sessions are
+    // backfilled with the next occurrence of their weekday (counting
+    // today), which keeps them upcoming and on the right day.
+    name: 'session-dates',
+    up: (db) => {
+      db.exec("ALTER TABLE sessions ADD COLUMN date TEXT NOT NULL DEFAULT ''")
+      const rows = db.prepare('SELECT id, day_of_week FROM sessions').all() as {
+        id: number
+        day_of_week: number
+      }[]
+      const today = todayIsoDate()
+      const todayDow = dayOfWeekOf(today)
+      const update = db.prepare('UPDATE sessions SET date = ? WHERE id = ?')
+      for (const row of rows) {
+        update.run(addDays(today, (row.day_of_week - todayDow + 7) % 7), row.id)
+      }
+      db.exec('ALTER TABLE sessions DROP COLUMN day_of_week')
     },
   },
 ]

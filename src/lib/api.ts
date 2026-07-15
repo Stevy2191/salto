@@ -31,13 +31,3 @@ export const apiGet = <T>(path: string) => api<T>(path, 'GET')
 export const apiPost = <T>(path: string, body?: unknown) => api<T>(path, 'POST', body)
 export const apiPut = <T>(path: string, body: unknown) => api<T>(path, 'PUT', body)
 export const apiDelete = (path: string) => api<void>(path, 'DELETE')
-
-export const DAY_NAMES = [
-  'Sunday',
-  'Monday',
-  'Tuesday',
-  'Wednesday',
-  'Thursday',
-  'Friday',
-  'Saturday',
-] as const

@@ -46,8 +46,11 @@ export interface GymClass {
 export interface Session {
   id: number
   name: string
-  /** 0 = Sunday … 6 = Saturday */
-  dayOfWeek: number
+  /**
+   * The specific calendar day ("YYYY-MM-DD") this session happens —
+   * sessions are per-date, not weekly slots; copy a session to repeat it.
+   */
+  date: string
   /** "HH:MM" 24h */
   startTime: string
   /** "HH:MM" 24h */

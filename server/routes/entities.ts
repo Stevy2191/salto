@@ -3,6 +3,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { Coach, GymClass, GymEvent, RequiredEvent, Session } from '../../shared/types.ts'
 import { formatTime, parseTime } from '../../shared/slots.ts'
 import { isHexColor, nextPaletteColor } from '../../shared/colors.ts'
+import { isIsoDate } from '../../shared/dates.ts'
 import {
   ApiError,
   asObject,
@@ -50,7 +51,7 @@ interface ClassRow {
 interface SessionRow {
   id: number
   name: string
-  day_of_week: number
+  date: string
   start_time: string
   end_time: string
   rotation_length: number
@@ -89,7 +90,7 @@ const toClass = (r: ClassRow): GymClass => ({
 const toSession = (r: SessionRow): Session => ({
   id: r.id,
   name: r.name,
-  dayOfWeek: r.day_of_week,
+  date: r.date,
   startTime: r.start_time,
   endTime: r.end_time,
   rotationLength: r.rotation_length,
@@ -174,13 +175,14 @@ function parseClass(body: unknown): {
 
 function parseSession(body: unknown): {
   name: string
-  dayOfWeek: number
+  date: string
   startTime: string
   endTime: string
   rotationLength: number
   classes: number[]
 } {
   const obj = asObject(body)
+  const date = reqIsoDate(obj.date, 'date')
   const startTime = reqString(obj.startTime, 'startTime', 5)
   const endTime = reqString(obj.endTime, 'endTime', 5)
   const start = parseTime(startTime)
@@ -195,12 +197,19 @@ function parseSession(body: unknown): {
   }
   return {
     name: optString(obj.name, 'name'),
-    dayOfWeek: reqInt(obj.dayOfWeek, 'dayOfWeek', 0, 6),
+    date,
     startTime,
     endTime,
     rotationLength,
     classes: intArray(obj.classes, 'classes'),
   }
+}
+
+function reqIsoDate(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !isIsoDate(value)) {
+    throw new ApiError(400, `${field} must be a real calendar date like 2026-03-03`)
+  }
+  return value
 }
 
 function requireRow(row: unknown, what: string): void {
@@ -366,7 +375,7 @@ export function entityRoutes(db: DatabaseSync): Router {
 
   // --- Sessions ---
   router.get('/sessions', (_req, res) => {
-    const rows = db.prepare('SELECT * FROM sessions ORDER BY day_of_week, start_time').all() as unknown as SessionRow[]
+    const rows = db.prepare('SELECT * FROM sessions ORDER BY date, start_time').all() as unknown as SessionRow[]
     res.json({ sessions: rows.map(toSession) })
   })
 
@@ -381,9 +390,9 @@ export function entityRoutes(db: DatabaseSync): Router {
     const s = parseSession(req.body)
     const result = db
       .prepare(
-        'INSERT INTO sessions (name, day_of_week, start_time, end_time, rotation_length, groups) VALUES (?, ?, ?, ?, ?, ?)',
+        'INSERT INTO sessions (name, date, start_time, end_time, rotation_length, groups) VALUES (?, ?, ?, ?, ?, ?)',
       )
-      .run(s.name, s.dayOfWeek, s.startTime, s.endTime, s.rotationLength, JSON.stringify(s.classes))
+      .run(s.name, s.date, s.startTime, s.endTime, s.rotationLength, JSON.stringify(s.classes))
     const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(result.lastInsertRowid) as unknown as SessionRow
     res.status(201).json({ session: toSession(row) })
   })
@@ -393,8 +402,8 @@ export function entityRoutes(db: DatabaseSync): Router {
     const s = parseSession(req.body)
     requireRow(db.prepare('SELECT id FROM sessions WHERE id = ?').get(id), 'session')
     db.prepare(
-      'UPDATE sessions SET name = ?, day_of_week = ?, start_time = ?, end_time = ?, rotation_length = ?, groups = ? WHERE id = ?',
-    ).run(s.name, s.dayOfWeek, s.startTime, s.endTime, s.rotationLength, JSON.stringify(s.classes), id)
+      'UPDATE sessions SET name = ?, date = ?, start_time = ?, end_time = ?, rotation_length = ?, groups = ? WHERE id = ?',
+    ).run(s.name, s.date, s.startTime, s.endTime, s.rotationLength, JSON.stringify(s.classes), id)
     const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as unknown as SessionRow
     res.json({ session: toSession(row) })
   })
@@ -433,8 +442,11 @@ export function entityRoutes(db: DatabaseSync): Router {
     requireRow(source, 'session')
     const obj = asObject(req.body)
     const name = optString(obj.name, 'name')
-    const dayOfWeek = reqInt(obj.dayOfWeek, 'dayOfWeek', 0, 6)
-    const startTime = reqString(obj.startTime, 'startTime', 5)
+    const date = reqIsoDate(obj.date, 'date')
+    // Copying the same week over usually keeps the time — default to the
+    // source's start rather than making the user retype it.
+    const startTime =
+      obj.startTime === undefined ? source!.start_time : reqString(obj.startTime, 'startTime', 5)
     const start = parseTime(startTime)
     if (start === null) throw new ApiError(400, 'startTime must be HH:MM')
     const sourceStart = parseTime(source!.start_time)!
@@ -447,11 +459,11 @@ export function entityRoutes(db: DatabaseSync): Router {
     const newId = withTransaction(db, () => {
       const inserted = db
         .prepare(
-          'INSERT INTO sessions (name, day_of_week, start_time, end_time, rotation_length, groups) VALUES (?, ?, ?, ?, ?, ?)',
+          'INSERT INTO sessions (name, date, start_time, end_time, rotation_length, groups) VALUES (?, ?, ?, ?, ?, ?)',
         )
         .run(
           name,
-          dayOfWeek,
+          date,
           startTime,
           formatTime(end),
           source!.rotation_length,

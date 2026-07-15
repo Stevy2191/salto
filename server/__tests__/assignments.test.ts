@@ -26,7 +26,7 @@ beforeEach(async () => {
     await request(app)
       .post('/api/sessions')
       .set('Cookie', cookie)
-      .send({ dayOfWeek: 1, startTime: '16:00', endTime: '18:00', classes: [classId] })
+      .send({ date: '2026-03-02', startTime: '16:00', endTime: '18:00', classes: [classId] })
   ).body.session.id
 })
 

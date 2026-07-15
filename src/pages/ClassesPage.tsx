@@ -4,7 +4,7 @@ import type { Coach, GymClass, GymEvent, RequiredEvent, Session } from '../../sh
 import { slotCount } from '../../shared/slots.ts'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api.ts'
 import { useLoad } from '../lib/useLoad.ts'
-import { sessionLabel } from './SessionsPage.tsx'
+import { sessionLabel } from '../lib/sessions.ts'
 import {
   Button,
   Card,

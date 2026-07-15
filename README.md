@@ -33,7 +33,7 @@ All three phases below are implemented — **v1 is feature-complete**.
 - Mark a coach absent or an event out for a single session; affected cells are flagged, and "Repair schedule" fixes only what the outage touches — with a plain-language summary of what changed
 - Print view: black-and-white-friendly block layout in the event colors, plus per-class "where do I go next" strips for handing to coaches
 - Colored Excel export matching gyms' hand-made sheets
-- Copy a session — same classes, schedule, and duration on a new day/time — as a starting point
+- Copy a session onto a new date — same classes, schedule, and duration — which is how a weekly practice repeats
 
 ## How scheduling works
 
