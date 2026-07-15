@@ -188,19 +188,14 @@ window, the exactly-tight window, the trivial session.
 
 ### Phase 1 — Setup & manual grid (walking skeleton)
 - CRUD for events, coaches, classes, sessions
-- **First-run experience:** a new gym sees an empty database. Provide a
-  guided setup **wizard** that carries the user through the steps in order
-  (add events → classes → coaches → first session) with Next/Back
-  navigation and a visible progress indicator (step names + "Step N of 4").
-  Steps aren't blocked on perfection — Next unlocks once the step has at
-  least one item. Finishing lands on the newly created session's schedule
-  grid with a brief pointer toward generation/manual assignment. The wizard
-  is non-blocking: exit any time, resume from the home page (which shows
-  setup progress), and completing setup another way — e.g. loading the
-  example gym — dismisses the guide. Also provide a "load example gym"
-  option that seeds realistic sample data (clearly fictional names) so
-  users can explore before entering their own. Sample data must be
-  one-click removable.
+- **First-run experience:** a new gym sees an empty database and goes
+  straight to the app — the Events / Classes / Coaches / Sessions pages are
+  the setup. The home page points at them and offers **"load example gym"**,
+  which seeds realistic sample data (clearly fictional names) so users can
+  explore before entering their own. Sample data must be one-click
+  removable. There is deliberately **no guided wizard**: it was tried and
+  removed — it added a parallel way to do everything the normal pages
+  already do, and a step order that real gyms don't follow.
 - The schedule grid: **classes as columns, time as rows** (5-minute rows),
   built by placing classes into columns for their own windows and then
   **drag-painting** events down the rows (see "Building a schedule")

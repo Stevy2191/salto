@@ -428,9 +428,9 @@ export function entityRoutes(db: DatabaseSync): Router {
     res.json({ session: toSession(row!) })
   })
 
-  // `classes` is a convenience for creating a session with a starting grid
-  // (the setup wizard uses it): each class lands in its own column running
-  // the whole window, which is exactly what a fresh session used to mean.
+  // `classes` is a convenience for creating a session with a starting grid:
+  // each class lands in its own column running the whole window, which is a
+  // sensible default to then edit down into real per-class windows.
   router.post('/sessions', (req, res) => {
     const s = parseSession(req.body)
     const startMin = parseTime(s.startTime)!

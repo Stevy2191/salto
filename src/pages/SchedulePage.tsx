@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import type { Coach, GymClass, GymEvent, Schedule, Session, Settings } from '../../shared/types.ts'
 import {
   SLOT_MINUTES,
@@ -60,8 +60,6 @@ type Drag = PaintDrag | ResizeDrag
 export function SchedulePage() {
   const params = useParams()
   const sessionId = Number(params.id)
-  const [searchParams, setSearchParams] = useSearchParams()
-  const showWelcome = searchParams.get('welcome') === '1'
   const navigate = useNavigate()
 
   const sessionLoad = useLoad(() => apiGet<{ session: Session }>(`/api/sessions/${sessionId}`))
@@ -354,19 +352,6 @@ export function SchedulePage() {
 
   return (
     <div className="space-y-4">
-      {showWelcome && (
-        <div className="flex flex-wrap items-center gap-3 rounded-xl bg-indigo-50 p-4 ring-1 ring-indigo-200 dark:bg-indigo-950 dark:ring-indigo-800">
-          <p className="flex-1 text-sm text-indigo-900 dark:text-indigo-100">
-            🎉 <span className="font-semibold">Setup complete</span> — add your classes to columns,
-            then pick an event and <span className="font-semibold">drag down the grid</span> to
-            paint it. Everything snaps to 5 minutes.
-          </p>
-          <Button variant="secondary" onClick={() => setSearchParams({}, { replace: true })}>
-            Got it
-          </Button>
-        </div>
-      )}
-
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">

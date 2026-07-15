@@ -6,7 +6,6 @@ import { apiDelete, apiGet, apiPost } from '../lib/api.ts'
 import { useLoad } from '../lib/useLoad.ts'
 import { Button, Card, EmptyNote, ErrorNote, PageHeader } from '../components/ui.tsx'
 import { sessionLabel } from '../lib/sessions.ts'
-import { SETUP_STEPS } from './SetupWizard.tsx'
 
 interface Overview {
   events: GymEvent[]
@@ -33,62 +32,43 @@ async function loadOverview(): Promise<Overview> {
   }
 }
 
-function GuidedSetup({ overview, onLoadExample }: { overview: Overview; onLoadExample: () => void }) {
-  const done = [
-    overview.events.length > 0,
-    overview.classes.length > 0,
-    overview.coaches.length > 0,
-    overview.sessions.length > 0,
-  ]
-  const nextIndex = done.indexOf(false)
-  const resumeStep = SETUP_STEPS[nextIndex === -1 ? 0 : nextIndex]!
-  const started = done.some(Boolean)
-
+/** A new gym: point at the pages, or hand them a gym to poke at. */
+function Welcome({ onLoadExample, busy }: { onLoadExample: () => void; busy: boolean }) {
   return (
-    <div className="space-y-4">
-      <Card>
-        <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">Welcome to Salto 👋</h2>
-        <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-          The setup guide walks you through the four steps below — or load a fictional example
-          gym to explore first; you can remove it again with one click.
-        </p>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <Link
-            to={`/guide/${resumeStep.slug}`}
-            className="min-h-11 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500"
-          >
-            {started ? 'Resume setup' : 'Start setup'}
-          </Link>
-          <Button variant="secondary" onClick={onLoadExample}>
-            Load example gym
-          </Button>
-        </div>
-      </Card>
-      <ol className="space-y-2">
-        {SETUP_STEPS.map((step, index) => (
-          <li key={step.slug}>
-            <Link
-              to={`/guide/${step.slug}`}
-              className={`flex items-center gap-3 rounded-xl bg-white dark:bg-slate-800 p-4 ring-1 transition-shadow hover:shadow ${
-                index === nextIndex ? 'ring-2 ring-indigo-500' : 'ring-slate-200 dark:ring-slate-700'
-              }`}
-            >
-              <span
-                className={`flex size-8 shrink-0 items-center justify-center rounded-full text-sm font-bold ${
-                  done[index] ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-200' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
-                }`}
-              >
-                {done[index] ? '✓' : index + 1}
-              </span>
-              <span>
-                <span className="block font-medium text-slate-900 dark:text-slate-100">{step.title}</span>
-                <span className="block text-sm text-slate-500 dark:text-slate-400">{step.detail}</span>
-              </span>
-            </Link>
-          </li>
-        ))}
-      </ol>
-    </div>
+    <Card>
+      <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">Welcome to Salto 👋</h2>
+      <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+        Add your{' '}
+        <Link className="font-medium text-indigo-600 dark:text-indigo-400" to="/events">
+          events
+        </Link>
+        ,{' '}
+        <Link className="font-medium text-indigo-600 dark:text-indigo-400" to="/classes">
+          classes
+        </Link>{' '}
+        and{' '}
+        <Link className="font-medium text-indigo-600 dark:text-indigo-400" to="/coaches">
+          coaches
+        </Link>
+        , then create a{' '}
+        <Link className="font-medium text-indigo-600 dark:text-indigo-400" to="/sessions">
+          session
+        </Link>{' '}
+        and build its schedule. Or load a fictional example gym to explore first — you can remove
+        it again with one click.
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button onClick={onLoadExample} disabled={busy}>
+          Load example gym
+        </Button>
+        <Link
+          to="/events"
+          className="min-h-11 rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 ring-1 ring-slate-300 hover:bg-slate-50 dark:bg-slate-700 dark:text-slate-200 dark:ring-slate-600 dark:hover:bg-slate-600"
+        >
+          Start with events
+        </Link>
+      </div>
+    </Card>
   )
 }
 
@@ -132,27 +112,12 @@ export function Dashboard() {
     data.coaches.length === 0 &&
     data.sessions.length === 0
 
-  if (isEmpty) {
-    return (
-      <div className="space-y-4">
-        <ErrorNote message={error ?? actionError} />
-        <GuidedSetup overview={data} onLoadExample={() => void loadExample()} />
-      </div>
-    )
-  }
-
-  const setupIncomplete =
-    data.events.length === 0 ||
-    data.classes.length === 0 ||
-    data.coaches.length === 0 ||
-    data.sessions.length === 0
-
   return (
     <div className="space-y-4">
       <PageHeader title="Your sessions" />
       <ErrorNote message={error ?? actionError} />
       {data.exampleLoaded && (
-        <div className="flex flex-wrap items-center gap-3 rounded-xl bg-amber-50 dark:bg-amber-950 p-4 ring-1 ring-amber-200 dark:ring-amber-800">
+        <div className="flex flex-wrap items-center gap-3 rounded-xl bg-amber-50 p-4 ring-1 ring-amber-200 dark:bg-amber-950 dark:ring-amber-800">
           <p className="flex-1 text-sm text-amber-800 dark:text-amber-200">
             You're exploring the fictional example gym. Remove it whenever you're ready to enter
             your own gym.
@@ -162,10 +127,19 @@ export function Dashboard() {
           </Button>
         </div>
       )}
-      {setupIncomplete && <GuidedSetup overview={data} onLoadExample={() => void loadExample()} />}
-      {!setupIncomplete && (
+      {isEmpty ? (
+        <Welcome onLoadExample={() => void loadExample()} busy={busy} />
+      ) : (
         <Card>
-          {data.sessions.length === 0 && <EmptyNote>No sessions yet.</EmptyNote>}
+          {data.sessions.length === 0 && (
+            <EmptyNote>
+              No sessions yet —{' '}
+              <Link className="font-medium text-indigo-600 dark:text-indigo-400" to="/sessions">
+                create one
+              </Link>{' '}
+              to start building a schedule.
+            </EmptyNote>
+          )}
           <ul className="divide-y divide-slate-100 dark:divide-slate-700">
             {data.sessions.map((session) => (
               <li key={session.id}>
@@ -174,13 +148,17 @@ export function Dashboard() {
                   className="flex min-h-14 flex-wrap items-center gap-2 py-3 hover:bg-slate-50 dark:hover:bg-slate-700"
                 >
                   <div className="flex-1">
-                    <span className="font-medium text-slate-900 dark:text-slate-100">{sessionLabel(session)}</span>
+                    <span className="font-medium text-slate-900 dark:text-slate-100">
+                      {sessionLabel(session)}
+                    </span>
                     <p className="text-sm text-slate-500 dark:text-slate-400">
                       {formatDateLong(session.date)} · {session.startTime}–{session.endTime} ·{' '}
                       {session.classCount} class{session.classCount === 1 ? '' : 'es'}
                     </p>
                   </div>
-                  <span className="text-sm font-medium text-indigo-600 dark:text-indigo-400">Open schedule →</span>
+                  <span className="text-sm font-medium text-indigo-600 dark:text-indigo-400">
+                    Open schedule →
+                  </span>
                 </Link>
               </li>
             ))}
