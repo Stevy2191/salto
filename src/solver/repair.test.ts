@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { generateSchedule } from './solver.ts'
 import { describeRepairChanges, repairSchedule } from './repair.ts'
 import type { RepairInput } from './repair.ts'
-import type { SolverInput } from './types.ts'
+
+const T = (hhmm: string) => {
+  const [h, m] = hhmm.split(':').map(Number)
+  return h! * 60 + m!
+}
 
 const event = (id: number, name: string, capacity: number | null = 1, active = true) => ({
   id,
@@ -11,7 +14,19 @@ const event = (id: number, name: string, capacity: number | null = 1, active = t
   active,
 })
 
-function baseInput(overrides: Partial<SolverInput>): SolverInput {
+const block = (
+  eventId: number,
+  from: string,
+  to: string,
+  coachId: number | null = null,
+  locked = false,
+) => ({ eventId, coachId, startMin: T(from), endMin: T(to), locked })
+
+/**
+ * Two classes, each needing Vault and Beam, in their own lanes across a
+ * 16:00–17:00 session. Their painted grid is passed in whole.
+ */
+function baseInput(overrides: Partial<RepairInput> = {}): RepairInput {
   return {
     events: [event(1, 'Vault'), event(2, 'Beam')],
     classes: [
@@ -41,179 +56,210 @@ function baseInput(overrides: Partial<SolverInput>): SolverInput {
       { id: 8, name: 'Sam Ortiz', specialties: [1, 2] },
       { id: 9, name: 'Riley Cho', specialties: [2] },
     ],
-    slotCount: 4,
-    rotationLength: 15,
+    placements: [
+      {
+        id: 1,
+        classId: 1,
+        startMin: T('16:00'),
+        endMin: T('17:00'),
+        blocks: [block(1, '16:00', '16:30', 7), block(2, '16:30', '17:00', 7)],
+      },
+      {
+        id: 2,
+        classId: 2,
+        startMin: T('16:00'),
+        endMin: T('17:00'),
+        blocks: [block(2, '16:00', '16:30', 8), block(1, '16:30', '17:00', 8)],
+      },
+    ],
     coachMode: 'class',
     adjacencyPenalties: [],
-    locked: [],
+    absentCoachIds: [],
+    unavailableEventIds: [],
     seed: 1,
     ...overrides,
   }
 }
 
-function repairInput(
-  base: SolverInput,
-  overrides: Partial<RepairInput>,
-): RepairInput {
-  const { locked: _locked, ...rest } = base
-  return {
-    ...rest,
-    original: [],
-    absentCoachIds: [],
-    unavailableEventIds: [],
-    ...overrides,
-  }
-}
+const blocksOf = (r: { placements: { placementId: number; blocks: unknown[] }[] }, id: number) =>
+  r.placements.find((p) => p.placementId === id)!.blocks
 
-function generated(base: SolverInput) {
-  const result = generateSchedule(base)
-  expect(result.ok).toBe(true)
-  if (!result.ok) throw new Error('unreachable')
-  return result.assignments
-}
+describe('repair with nothing wrong', () => {
+  it('changes nothing', () => {
+    const result = repairSchedule(baseInput())
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('unreachable')
+    expect(result.changes).toEqual([])
+    expect(describeRepairChanges(result.changes, baseInput() as never)).toEqual([
+      'Nothing needed to change.',
+    ])
+  })
+})
 
 describe('repair: absent coach', () => {
-  it('keeps every placement and restaffs with a free coach', () => {
-    const base = baseInput({})
-    const original = generated(base)
-    const result = repairSchedule(repairInput(base, { original, absentCoachIds: [7] }))
+  it('keeps every block where it is and only restaffs', () => {
+    const before = baseInput()
+    const result = repairSchedule({ ...before, absentCoachIds: [7] })
     expect(result.ok).toBe(true)
     if (!result.ok) throw new Error('unreachable')
 
-    // Same cells, exactly — only coaches may differ.
-    const cells = (list: typeof original) =>
-      list.map((a) => `${a.slotIndex}:${a.eventId}:${a.classId}`).sort()
-    expect(cells(result.assignments)).toEqual(cells(original))
-    expect(result.assignments.every((a) => a.coachId !== 7)).toBe(true)
-
-    // Every cell that had Dana got a reassignment change entry.
-    const affected = original.filter((a) => a.coachId === 7)
-    expect(affected.length).toBeGreaterThan(0)
-    const reassignments = result.changes.filter((c) => c.kind === 'coach-reassigned')
-    expect(reassignments).toHaveLength(affected.length)
-  })
-
-  it('leaves the cell coachless when no substitute is free, and says so', () => {
-    const base = baseInput({
-      coaches: [{ id: 7, name: 'Dana Marsh', specialties: [1, 2] }],
-      classes: baseInput({}).classes.map((g) => ({ ...g, assignedCoaches: [7] })),
-    })
-    const original = generated(base)
-    const result = repairSchedule(repairInput(base, { original, absentCoachIds: [7] }))
-    expect(result.ok).toBe(true)
-    if (!result.ok) throw new Error('unreachable')
-    expect(result.assignments.every((a) => a.coachId === null)).toBe(true)
-
-    const messages = describeRepairChanges(result.changes, {
-      events: base.events,
-      classes: base.classes,
-      coaches: base.coaches,
-      startTime: '16:00',
-      rotationLength: 15,
-    })
-    expect(messages.join(' ')).toContain('Dana Marsh is out')
-    expect(messages.join(' ')).toContain('currently has no coach')
-  })
-
-  it('untouched assignments keep their original coach', () => {
-    const base = baseInput({})
-    const original = generated(base)
-    const result = repairSchedule(repairInput(base, { original, absentCoachIds: [7] }))
-    if (!result.ok) throw new Error('expected ok')
-    for (const a of original) {
-      if (a.coachId === 7) continue
-      const kept = result.assignments.find(
-        (x) => x.slotIndex === a.slotIndex && x.eventId === a.eventId && x.classId === a.classId,
+    // Nothing moved: same events at the same times.
+    for (const p of before.placements) {
+      expect(blocksOf(result, p.id)).toMatchObject(
+        p.blocks.map((b) => ({ eventId: b.eventId, startMin: b.startMin, endMin: b.endMin })),
       )
-      expect(kept).toEqual(a)
+    }
+    // Dana's blocks are no longer hers.
+    expect(blocksOf(result, 1).every((b) => (b as { coachId: number | null }).coachId !== 7)).toBe(
+      true,
+    )
+    expect(result.changes.every((c) => c.kind === 'coach-reassigned')).toBe(true)
+  })
+
+  it('hands the class to a free substitute and says so', () => {
+    // Riley (9) coaches Beam and is otherwise idle.
+    const result = repairSchedule({ ...baseInput(), absentCoachIds: [7], coachMode: 'event' })
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('unreachable')
+    const messages = describeRepairChanges(result.changes, {
+      events: baseInput().events,
+      classes: baseInput().classes,
+      coaches: baseInput().coaches,
+    })
+    expect(messages.join(' ')).toMatch(/Dana Marsh is out/)
+  })
+
+  it('leaves the block coachless when no substitute is free, and says so', () => {
+    // Only Dana exists, and she is out.
+    const input = baseInput({
+      coaches: [{ id: 7, name: 'Dana Marsh', specialties: [1, 2] }],
+      classes: baseInput().classes.map((c) => ({ ...c, assignedCoaches: [7] })),
+      placements: [
+        {
+          id: 1,
+          classId: 1,
+          startMin: T('16:00'),
+          endMin: T('17:00'),
+          blocks: [block(1, '16:00', '16:30', 7), block(2, '16:30', '17:00', 7)],
+        },
+      ],
+    })
+    const result = repairSchedule({ ...input, absentCoachIds: [7] })
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('unreachable')
+    expect(blocksOf(result, 1).every((b) => (b as { coachId: number | null }).coachId === null)).toBe(
+      true,
+    )
+    const messages = describeRepairChanges(result.changes, {
+      events: input.events,
+      classes: input.classes,
+      coaches: input.coaches,
+    })
+    expect(messages.join(' ')).toMatch(/currently has no coach/)
+  })
+
+  it('never double-books the substitute', () => {
+    const result = repairSchedule({ ...baseInput(), absentCoachIds: [7, 8] })
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('unreachable')
+    // Riley only coaches Beam, and both classes are on Beam at different
+    // times, so she can take both — but never two places at once.
+    const perSlot = new Map<string, number>()
+    for (const p of result.placements) {
+      for (const b of p.blocks as { coachId: number | null; eventId: number; startMin: number; endMin: number }[]) {
+        if (b.coachId === null) continue
+        for (let t = b.startMin; t < b.endMin; t += 5) {
+          const key = `${b.coachId}:${t}`
+          const prev = perSlot.get(key)
+          if (prev !== undefined) expect(prev).toBe(b.eventId)
+          perSlot.set(key, b.eventId)
+        }
+      }
     }
   })
 })
 
 describe('repair: event out for the session', () => {
   it('removes blocks on the out event and leaves everything else in place', () => {
-    const base = baseInput({})
-    const original = generated(base)
-    const result = repairSchedule(repairInput(base, { original, unavailableEventIds: [2] }))
+    const before = baseInput()
+    const result = repairSchedule({ ...before, unavailableEventIds: [1] })
     expect(result.ok).toBe(true)
     if (!result.ok) throw new Error('unreachable')
 
-    expect(result.assignments.every((a) => a.eventId !== 2)).toBe(true)
-    const survivors = original.filter((a) => a.eventId !== 2)
-    expect(result.assignments).toHaveLength(survivors.length)
-    for (const a of survivors) {
-      expect(result.assignments).toContainEqual(a)
+    // No Vault anywhere…
+    for (const p of result.placements) {
+      expect((p.blocks as { eventId: number }[]).some((b) => b.eventId === 1)).toBe(false)
     }
-
-    const messages = describeRepairChanges(result.changes, {
-      events: base.events,
-      classes: base.classes,
-      coaches: base.coaches,
-      startTime: '16:00',
-      rotationLength: 15,
-    })
-    expect(messages.join(' ')).toContain('Beam is out')
-    expect(messages.join(' ')).toContain('requirement skipped this session')
+    // …and the Beam blocks never moved.
+    expect(blocksOf(result, 1)).toMatchObject([{ eventId: 2, startMin: T('16:30'), endMin: T('17:00') }])
+    expect(result.changes.filter((c) => c.kind === 'removed-event-out')).toHaveLength(2)
   })
 
-  it('preserves user locks through a repair', () => {
-    const base = baseInput({})
-    const original = generated(base).map((a, i) => ({ ...a, locked: i === 0 }))
-    const result = repairSchedule(repairInput(base, { original, absentCoachIds: [7] }))
-    if (!result.ok) throw new Error('expected ok')
-    const lockedCells = result.assignments.filter((a) => a.locked)
-    const originalLocked = original.filter((a) => a.locked && a.eventId !== 0)
-    expect(lockedCells.map((a) => `${a.slotIndex}:${a.eventId}:${a.classId}`)).toEqual(
-      originalLocked.map((a) => `${a.slotIndex}:${a.eventId}:${a.classId}`),
-    )
+  it('explains the removal as a skipped requirement', () => {
+    const result = repairSchedule({ ...baseInput(), unavailableEventIds: [1] })
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('unreachable')
+    const messages = describeRepairChanges(result.changes, {
+      events: baseInput().events,
+      classes: baseInput().classes,
+      coaches: baseInput().coaches,
+    })
+    expect(messages.join(' ')).toMatch(/Vault is out/)
+    expect(messages.join(' ')).toMatch(/requirement skipped this session/)
   })
 })
 
-describe('repair: filling uncovered requirements', () => {
-  it('places requirements the original schedule was missing', () => {
-    const base = baseInput({})
-    // Original only covers class 1's vault — everything else is missing.
-    const original = [
-      { slotIndex: 0, eventId: 1, classId: 1, coachId: 7 },
-      { slotIndex: 1, eventId: 1, classId: 1, coachId: 7 },
-    ]
-    const result = repairSchedule(repairInput(base, { original }))
+describe('repair: filling gaps', () => {
+  it('places uncovered requirements around what is already painted', () => {
+    // Level 3 only has Vault painted; Beam is missing and must be added
+    // inside its own window.
+    const input = baseInput({
+      placements: [
+        {
+          id: 1,
+          classId: 1,
+          startMin: T('16:00'),
+          endMin: T('17:00'),
+          blocks: [block(1, '16:00', '16:30', 7)],
+        },
+      ],
+      classes: [baseInput().classes[0]!],
+    })
+    const result = repairSchedule(input)
     expect(result.ok).toBe(true)
     if (!result.ok) throw new Error('unreachable')
-    // Original cells untouched…
-    for (const a of original) {
-      expect(result.assignments).toContainEqual({ ...a, locked: false })
+
+    const blocks = blocksOf(result, 1) as { eventId: number; startMin: number; endMin: number }[]
+    expect(blocks.some((b) => b.eventId === 2)).toBe(true)
+    // The original Vault block did not move.
+    expect(blocks).toContainEqual(expect.objectContaining({ eventId: 1, startMin: T('16:00') }))
+    // Everything stayed inside the class's window.
+    for (const b of blocks) {
+      expect(b.startMin).toBeGreaterThanOrEqual(T('16:00'))
+      expect(b.endMin).toBeLessThanOrEqual(T('17:00'))
     }
-    // …and each class now has its full 4 slots of requirements.
-    for (const classId of [1, 2]) {
-      expect(result.assignments.filter((a) => a.classId === classId)).toHaveLength(4)
-    }
-    expect(result.changes.some((c) => c.kind === 'added')).toBe(true)
+    expect(result.changes.filter((c) => c.kind === 'added').length).toBeGreaterThan(0)
   })
 
-  it('explains impossibility in plain language', () => {
-    const base = baseInput({})
-    // Class 2's beam requirement is uncovered, but class 1 holds beam for
-    // slots 0–1 and vault demand fills the rest — session too tight after
-    // shrinking to 2 slots.
-    const tight = { ...base, slotCount: 2 }
-    const original = [
-      { slotIndex: 0, eventId: 2, classId: 1, coachId: null },
-      { slotIndex: 1, eventId: 2, classId: 1, coachId: null },
-    ]
-    const result = repairSchedule(repairInput(tight, { original }))
+  it('fails with an explanation when the class window cannot hold the rest', () => {
+    const input = baseInput({
+      classes: [
+        {
+          id: 1,
+          name: 'Silver',
+          priority: 0,
+          requiredEvents: [{ eventId: 1, duration: 40 }],
+          assignedCoaches: [],
+        },
+      ],
+      placements: [
+        { id: 1, classId: 1, startMin: T('16:00'), endMin: T('16:30'), blocks: [] },
+      ],
+    })
+    const result = repairSchedule(input)
     expect(result.ok).toBe(false)
     if (result.ok) throw new Error('unreachable')
-    expect(result.reasons.length).toBeGreaterThan(0)
-    expect(result.reasons.every((r) => r.length > 10)).toBe(true)
-  })
-})
-
-describe('repair determinism', () => {
-  it('same input and seed produce the same repair', () => {
-    const base = baseInput({})
-    const original = generated(base)
-    const input = repairInput(base, { original, absentCoachIds: [7], unavailableEventIds: [2] })
-    expect(repairSchedule(input)).toEqual(repairSchedule(input))
+    expect(result.reasons.join(' ')).toMatch(/Silver/)
+    expect(result.reasons.join(' ')).toMatch(/30-min/)
   })
 })

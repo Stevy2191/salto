@@ -1,18 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import { generateSchedule } from './solver.ts'
 import { hardConstraintViolations } from './validate.ts'
-import type { SolverInput } from './types.ts'
+import type { SolverBlock, SolverInput, SolverPlacement } from './types.ts'
+
+const T = (hhmm: string) => {
+  const [h, m] = hhmm.split(':').map(Number)
+  return h! * 60 + m!
+}
 
 function makeInput(overrides: Partial<SolverInput>): SolverInput {
   return {
     events: [],
     classes: [],
     coaches: [],
-    slotCount: 8,
-    rotationLength: 15,
+    placements: [],
     coachMode: 'class',
     adjacencyPenalties: [],
-    locked: [],
     seed: 1,
     ...overrides,
   }
@@ -33,11 +36,27 @@ const cls = (
   assignedCoaches: number[] = [],
 ) => ({ id, name, priority, requiredEvents, assignedCoaches })
 
+/** A class in a column for a window; defaults to a 2-hour 16:00 window. */
+const place = (
+  id: number,
+  classId: number,
+  from = '16:00',
+  to = '18:00',
+  locked: SolverBlock[] = [],
+): SolverPlacement => ({ id, classId, startMin: T(from), endMin: T(to), locked })
+
+const block = (eventId: number, from: string, to: string, coachId: number | null = null) => ({
+  eventId,
+  coachId,
+  startMin: T(from),
+  endMin: T(to),
+})
+
 function expectOk(input: SolverInput) {
   const result = generateSchedule(input)
   expect(result.ok, `expected ok, got: ${!result.ok ? result.reasons.join(' | ') : ''}`).toBe(true)
   if (!result.ok) throw new Error('unreachable')
-  expect(hardConstraintViolations(input, result.assignments)).toEqual([])
+  expect(hardConstraintViolations(input, result.placements)).toEqual([])
   return result
 }
 
@@ -49,176 +68,183 @@ function expectFail(input: SolverInput) {
   return result
 }
 
-describe('unlimited capacity', () => {
-  it('lets any number of classes share an event with no limit', () => {
-    // Three classes all need the full 2-slot window on one unlimited event —
-    // impossible under any finite capacity below 3.
+/** Every block the solver returned, flattened. */
+const allBlocks = (r: { placements: { blocks: SolverBlock[] }[] }) =>
+  r.placements.flatMap((p) => p.blocks)
+
+describe('trivial session', () => {
+  it('schedules one class on one event inside its window', () => {
     const input = makeInput({
-      slotCount: 2,
-      events: [event(1, 'Open Gym', null)],
-      classes: [
-        cls(1, 'A', [{ eventId: 1, duration: 30 }]),
-        cls(2, 'B', [{ eventId: 1, duration: 30 }]),
-        cls(3, 'C', [{ eventId: 1, duration: 30 }]),
-      ],
+      events: [event(1, 'Vault')],
+      classes: [cls(1, 'Level 3', [{ eventId: 1, duration: 30 }])],
+      placements: [place(1, 1)],
     })
     const result = expectOk(input)
-    expect(result.assignments).toHaveLength(6)
+    expect(allBlocks(result)).toMatchObject([{ eventId: 1, startMin: T('16:00'), endMin: T('16:30') }])
   })
 
-  it('still reports overbooking on limited events', () => {
+  it('leaves a class with no requirements alone — painting needs no setup', () => {
     const input = makeInput({
-      slotCount: 2,
-      events: [event(1, 'Vault', 1)],
-      classes: [
-        cls(1, 'A', [{ eventId: 1, duration: 30 }]),
-        cls(2, 'B', [{ eventId: 1, duration: 30 }]),
-      ],
+      events: [event(1, 'Vault')],
+      classes: [cls(1, 'Level 3', [])],
+      placements: [place(1, 1)],
     })
-    const result = expectFail(input)
+    const result = expectOk(input)
+    expect(allBlocks(result)).toEqual([])
+  })
+
+  it('says so when nothing is placed yet', () => {
+    const result = expectFail(makeInput({ events: [event(1, 'Vault')] }))
+    expect(result.reasons[0]).toMatch(/add a class to a column/i)
+  })
+})
+
+describe('class windows', () => {
+  it('never places a block outside the class window', () => {
+    // Silver only runs 16:00–17:00 even though the lane is longer.
+    const input = makeInput({
+      events: [event(1, 'Vault')],
+      classes: [cls(1, 'Silver', [{ eventId: 1, duration: 30 }])],
+      placements: [place(1, 1, '16:00', '17:00')],
+    })
+    const result = expectOk(input)
+    for (const b of allBlocks(result)) {
+      expect(b.startMin).toBeGreaterThanOrEqual(T('16:00'))
+      expect(b.endMin).toBeLessThanOrEqual(T('17:00'))
+    }
+  })
+
+  it('explains a class needing more than its own window, citing the window', () => {
+    const result = expectFail(
+      makeInput({
+        events: [event(1, 'Vault')],
+        classes: [cls(1, 'Silver', [{ eventId: 1, duration: 40 }])],
+        placements: [place(1, 1, '16:00', '16:30')],
+      }),
+    )
+    // The complaint is about Silver's window, not the session.
+    expect(result.reasons.join(' ')).toContain('Silver')
+    expect(result.reasons.join(' ')).toMatch(/40 min .* 30-min .*window/)
+  })
+
+  it('explains total required time exceeding the window', () => {
+    const result = expectFail(
+      makeInput({
+        events: [event(1, 'Vault'), event(2, 'Beam')],
+        classes: [
+          cls(1, 'Silver', [
+            { eventId: 1, duration: 30 },
+            { eventId: 2, duration: 45 },
+          ]),
+        ],
+        placements: [place(1, 1, '16:00', '17:00')],
+      }),
+    )
+    expect(result.reasons.join(' ')).toMatch(/Silver has 75 min of required events .* 60-min/)
+  })
+
+  it('fits two classes with different windows on one capacity-1 event', () => {
+    // They cannot collide: their windows barely touch.
+    const input = makeInput({
+      events: [event(1, 'Vault')],
+      classes: [
+        cls(1, 'LV 1', [{ eventId: 1, duration: 60 }]),
+        cls(2, 'LV 2', [{ eventId: 1, duration: 60 }]),
+      ],
+      placements: [place(1, 1, '16:00', '17:00'), place(2, 2, '17:00', '18:00')],
+    })
+    const result = expectOk(input)
+    expect(allBlocks(result)).toHaveLength(2)
+  })
+
+  it('reports overbooking when windows force a clash on one event', () => {
+    const result = expectFail(
+      makeInput({
+        events: [event(1, 'Vault')],
+        classes: [
+          cls(1, 'A', [{ eventId: 1, duration: 60 }]),
+          cls(2, 'B', [{ eventId: 1, duration: 60 }]),
+        ],
+        placements: [place(1, 1, '16:00', '17:00'), place(2, 2, '16:00', '17:00')],
+      }),
+    )
     expect(result.reasons.join(' ')).toContain('overbooked')
   })
 })
 
-describe('trivial session', () => {
-  it('schedules one class on one event', () => {
+describe('capacity', () => {
+  it('lets an unlimited event hold every class at once', () => {
     const input = makeInput({
-      events: [event(1, 'Vault')],
-      classes: [cls(1, 'Level 3', [{ eventId: 1, duration: 30 }])],
+      events: [event(1, 'Open Gym', null)],
+      classes: [1, 2, 3].map((i) => cls(i, `C${i}`, [{ eventId: 1, duration: 60 }])),
+      placements: [place(1, 1, '16:00', '17:00'), place(2, 2, '16:00', '17:00'), place(3, 3, '16:00', '17:00')],
     })
-    const result = expectOk(input)
-    expect(result.assignments).toHaveLength(2)
-    expect(result.assignments.every((a) => a.eventId === 1 && a.classId === 1)).toBe(true)
+    expect(allBlocks(expectOk(input))).toHaveLength(3)
   })
 
-  it('handles a class with no requirements', () => {
+  it('respects a capacity above one', () => {
     const input = makeInput({
-      events: [event(1, 'Vault')],
-      classes: [cls(1, 'Level 3', [])],
+      events: [event(1, 'Floor', 2)],
+      classes: [1, 2].map((i) => cls(i, `C${i}`, [{ eventId: 1, duration: 60 }])),
+      placements: [place(1, 1, '16:00', '17:00'), place(2, 2, '16:00', '17:00')],
     })
-    expect(expectOk(input).assignments).toHaveLength(0)
-  })
-})
-
-describe('exactly-tight session', () => {
-  it('fills a perfect swap with no idle slots', () => {
-    // Two classes, two capacity-1 events, 4 slots; each class needs each
-    // event for 2 slots. Only solution: swap halves. Zero idle.
-    const input = makeInput({
-      slotCount: 4,
-      events: [event(1, 'Vault'), event(2, 'Beam')],
-      classes: [
-        cls(1, 'Level 3', [
-          { eventId: 1, duration: 30 },
-          { eventId: 2, duration: 30 },
-        ]),
-        cls(2, 'Level 5', [
-          { eventId: 1, duration: 30 },
-          { eventId: 2, duration: 30 },
-        ]),
-      ],
-    })
-    const result = expectOk(input)
-    expect(result.assignments).toHaveLength(8)
-    for (const classId of [1, 2]) {
-      const busySlots = new Set(
-        result.assignments.filter((a) => a.classId === classId).map((a) => a.slotIndex),
-      )
-      expect(busySlots.size).toBe(4) // no idle slots
-    }
+    expect(allBlocks(expectOk(input))).toHaveLength(2)
   })
 })
 
-describe('impossible sessions explain themselves', () => {
-  it('class needs more time than the session has', () => {
-    const input = makeInput({
-      slotCount: 5, // 75 min
-      events: [event(1, 'Vault'), event(2, 'Beam'), event(3, 'Floor')],
-      classes: [
-        cls(1, 'Level 3 Girls', [
-          { eventId: 1, duration: 30 },
-          { eventId: 2, duration: 30 },
-          { eventId: 3, duration: 30 },
-        ]),
-      ],
-    })
-    const result = expectFail(input)
-    expect(result.reasons.join(' ')).toContain(
-      'Level 3 Girls needs 90 min of events but the session is only 75 min',
+describe('requirements the solver cannot meet', () => {
+  it('rejects an inactive required event', () => {
+    const result = expectFail(
+      makeInput({
+        events: [event(1, 'Vault', 1, false)],
+        classes: [cls(1, 'Boys Team', [{ eventId: 1, duration: 30 }])],
+        placements: [place(1, 1)],
+      }),
     )
+    expect(result.reasons.join(' ')).toContain('inactive')
   })
 
-  it('event is overbooked beyond its capacity', () => {
-    const input = makeInput({
-      slotCount: 4,
-      events: [event(1, 'Vault', 1)],
-      classes: [
-        cls(1, 'A', [{ eventId: 1, duration: 45 }]),
-        cls(2, 'B', [{ eventId: 1, duration: 45 }]),
-      ],
-    })
-    const result = expectFail(input)
-    expect(result.reasons.join(' ')).toContain(
-      'Vault is overbooked: classes need 90 min on it but it only fits 60 min',
+  it('rejects a duration off the 5-minute axis', () => {
+    const result = expectFail(
+      makeInput({
+        events: [event(1, 'Vault')],
+        classes: [cls(1, 'Xcel', [{ eventId: 1, duration: 22 }])],
+        placements: [place(1, 1)],
+      }),
     )
+    expect(result.reasons.join(' ')).toMatch(/multiple of 5/)
   })
 
-  it('required event is inactive', () => {
-    const input = makeInput({
-      events: [event(1, 'Pit', 1, false)],
-      classes: [cls(1, 'Boys Team', [{ eventId: 1, duration: 30 }])],
-    })
-    const result = expectFail(input)
-    expect(result.reasons.join(' ')).toContain('Boys Team requires Pit, which is marked inactive')
-  })
-
-  it('duration is not a multiple of the rotation', () => {
-    const input = makeInput({
-      rotationLength: 10,
-      events: [event(1, 'Beam')],
-      classes: [cls(1, 'Xcel', [{ eventId: 1, duration: 25 }])],
-    })
-    const result = expectFail(input)
-    expect(result.reasons.join(' ')).toContain(
-      "Xcel's 25 min on Beam isn't a multiple of the 10-min rotation",
+  it('rejects a required event that no longer exists', () => {
+    const result = expectFail(
+      makeInput({
+        events: [event(1, 'Vault')],
+        classes: [cls(1, 'A', [{ eventId: 9, duration: 30 }])],
+        placements: [place(1, 1)],
+      }),
     )
+    expect(result.reasons.join(' ')).toMatch(/no longer exists/)
   })
 
-  it('reports multiple reasons at once', () => {
-    const input = makeInput({
-      slotCount: 2,
-      events: [event(1, 'Vault'), event(2, 'Pit', 1, false)],
-      classes: [
-        cls(1, 'A', [{ eventId: 1, duration: 60 }]),
-        cls(2, 'B', [{ eventId: 2, duration: 15 }]),
-      ],
-    })
-    const result = expectFail(input)
-    expect(result.reasons.length).toBeGreaterThanOrEqual(2)
-  })
-
-  it('never returns a bare failure', () => {
-    // Feasible on paper per-aggregate but unsolvable in arrangement:
-    // three classes × 2 contiguous slots on one capacity-1 event in 5 slots
-    // (aggregate 6 > 5 is caught; craft a subtler one: two classes needing
-    // 3 contiguous slots each on the same event within 5 slots).
-    const input = makeInput({
-      slotCount: 5,
-      events: [event(1, 'Vault')],
-      classes: [
-        cls(1, 'A', [{ eventId: 1, duration: 45 }]),
-        cls(2, 'B', [{ eventId: 1, duration: 45 }]),
-      ],
-    })
-    const result = expectFail(input)
-    expect(result.reasons.every((r) => r.length > 10)).toBe(true)
+  it('reports every reason at once, not just the first', () => {
+    const result = expectFail(
+      makeInput({
+        events: [event(1, 'Vault'), event(2, 'Beam', 1, false)],
+        classes: [
+          cls(1, 'A', [{ eventId: 1, duration: 300 }]),
+          cls(2, 'B', [{ eventId: 2, duration: 30 }]),
+        ],
+        placements: [place(1, 1), place(2, 2)],
+      }),
+    )
+    expect(result.reasons.length).toBeGreaterThan(1)
   })
 })
 
-describe('locks', () => {
-  const base = () =>
-    makeInput({
-      slotCount: 4,
+describe('locked blocks', () => {
+  it('keeps locked blocks exactly and plans around them', () => {
+    const locked = block(1, '17:00', '17:30')
+    const input = makeInput({
       events: [event(1, 'Vault'), event(2, 'Beam')],
       classes: [
         cls(1, 'Level 3', [
@@ -226,201 +252,141 @@ describe('locks', () => {
           { eventId: 2, duration: 30 },
         ]),
       ],
+      placements: [place(1, 1, '16:00', '18:00', [locked])],
     })
-
-  it('preserves locked cells exactly and counts them toward requirements', () => {
-    const input = base()
-    input.locked = [
-      { slotIndex: 3, eventId: 1, classId: 1, coachId: null, locked: true },
-    ]
     const result = expectOk(input)
-    const lockKept = result.assignments.find(
-      (a) => a.slotIndex === 3 && a.eventId === 1 && a.classId === 1,
+    const blocks = allBlocks(result)
+    expect(blocks).toContainEqual(expect.objectContaining({ ...locked }))
+    // The lock counts toward the Vault requirement rather than duplicating.
+    expect(blocks.filter((b) => b.eventId === 1)).toHaveLength(1)
+    expect(blocks.filter((b) => b.eventId === 2)).toHaveLength(1)
+  })
+
+  it('credits a partial lock and generates only the remainder', () => {
+    const input = makeInput({
+      events: [event(1, 'Vault')],
+      classes: [cls(1, 'Level 3', [{ eventId: 1, duration: 60 }])],
+      placements: [place(1, 1, '16:00', '18:00', [block(1, '16:00', '16:30')])],
+    })
+    const blocks = allBlocks(expectOk(input))
+    const total = blocks
+      .filter((b) => b.eventId === 1)
+      .reduce((sum, b) => sum + (b.endMin - b.startMin), 0)
+    expect(total).toBe(60)
+  })
+
+  it('rejects a locked block outside its class window', () => {
+    const result = expectFail(
+      makeInput({
+        events: [event(1, 'Vault')],
+        classes: [cls(1, 'Level 3', [])],
+        placements: [place(1, 1, '16:00', '17:00', [block(1, '17:30', '18:00')])],
+      }),
     )
-    expect(lockKept?.locked).toBe(true)
-    // 30 min vault = 2 slots; one is locked, so exactly one more generated.
-    expect(result.assignments.filter((a) => a.eventId === 1)).toHaveLength(2)
-    expect(result.assignments).toHaveLength(4)
+    expect(result.reasons.join(' ')).toMatch(/outside its .* window/)
   })
 
-  it('fails with an explanation when locks double-book a class', () => {
-    const input = base()
-    input.locked = [
-      { slotIndex: 0, eventId: 1, classId: 1, coachId: null, locked: true },
-      { slotIndex: 0, eventId: 2, classId: 1, coachId: null, locked: true },
-    ]
-    const result = expectFail(input)
-    expect(result.reasons.join(' ')).toContain('Level 3 is locked in two places at rotation 1')
-  })
-
-  it('fails with an explanation when locks double-book a coach', () => {
-    const input = base()
-    input.classes.push(cls(2, 'Level 5', []))
-    input.coaches = [{ id: 9, name: 'Dana Marsh', specialties: [] }]
-    input.locked = [
-      { slotIndex: 1, eventId: 1, classId: 1, coachId: 9, locked: true },
-      { slotIndex: 1, eventId: 2, classId: 2, coachId: 9, locked: true },
-    ]
-    const result = expectFail(input)
-    expect(result.reasons.join(' ')).toContain('Dana Marsh is locked in two places at rotation 2')
-  })
-
-  it('solves around locks from other classes', () => {
-    const input = base()
-    input.classes.push(cls(2, 'Level 5', []))
-    input.locked = [
-      { slotIndex: 0, eventId: 1, classId: 2, coachId: null, locked: true },
-      { slotIndex: 1, eventId: 1, classId: 2, coachId: null, locked: true },
-    ]
+  it('solves around locks belonging to other classes', () => {
+    // Vault fits one class; A holds it 16:00–17:00, so B must take the rest.
+    const input = makeInput({
+      events: [event(1, 'Vault')],
+      classes: [cls(1, 'A', []), cls(2, 'B', [{ eventId: 1, duration: 30 }])],
+      placements: [place(1, 1, '16:00', '18:00', [block(1, '16:00', '17:00')]), place(2, 2)],
+    })
     const result = expectOk(input)
-    // Level 3's vault slots must avoid the locked ones (capacity 1).
-    const level3Vault = result.assignments.filter((a) => a.classId === 1 && a.eventId === 1)
-    expect(level3Vault.map((a) => a.slotIndex).sort()).toEqual([2, 3])
+    const b = result.placements.find((p) => p.placementId === 2)!.blocks[0]!
+    expect(b.startMin).toBeGreaterThanOrEqual(T('17:00'))
   })
 })
 
 describe('soft constraints', () => {
-  it('gives higher-priority classes the contested event', () => {
-    // Both classes want all 4 slots of the single vault; impossible — so
-    // shrink: both want 3 of 4 slots. Aggregate 6 > 4 fails. Use a
-    // different probe: priority class + filler class compete for vault
-    // early; assert the high-priority class's requirements are met (they
-    // both must be met in any ok result), so instead assert determinism of
-    // placement order: the high-priority class gets vault when only one
-    // can have it at slot 0 — probe via locks occupying alternatives.
+  it('gives a higher-priority class the contested event', () => {
     const input = makeInput({
-      slotCount: 2,
-      events: [event(1, 'Vault'), event(2, 'Beam', 2)],
+      events: [event(1, 'Vault')],
       classes: [
         cls(1, 'Rec', [{ eventId: 1, duration: 15 }], 0),
         cls(2, 'Optionals', [{ eventId: 1, duration: 15 }], 5),
       ],
+      placements: [place(1, 1, '16:00', '16:30'), place(2, 2, '16:00', '16:30')],
     })
     const result = expectOk(input)
-    // Only one vault slot each — both fit (2 slots). Fine either way; the
-    // meaningful assertion is that all requirements are satisfied, which
-    // expectOk() already verified via the validator.
-    expect(result.assignments.filter((a) => a.eventId === 1)).toHaveLength(2)
-  })
-
-  it('avoids a configured bad back-to-back pair when an alternative exists', () => {
-    // Class needs Conditioning (1 slot) and Beam (1 slot) in a 4-slot
-    // session. Penalize conditioning→beam. With free room, they should not
-    // land adjacent in that order.
-    const input = makeInput({
-      slotCount: 4,
-      events: [event(1, 'Conditioning', 2), event(2, 'Beam')],
-      classes: [
-        cls(1, 'Xcel', [
-          { eventId: 1, duration: 15 },
-          { eventId: 2, duration: 15 },
-        ]),
-      ],
-      adjacencyPenalties: [{ beforeEventId: 1, afterEventId: 2 }],
-    })
-    for (const seed of [1, 2, 3, 4, 5]) {
-      const result = expectOk({ ...input, seed })
-      const conditioning = result.assignments.find((a) => a.eventId === 1)!
-      const beam = result.assignments.find((a) => a.eventId === 2)!
-      expect(beam.slotIndex).not.toBe(conditioning.slotIndex + 1)
-    }
+    const optionals = result.placements.find((p) => p.placementId === 2)!.blocks[0]!
+    expect(optionals.startMin).toBe(T('16:00'))
   })
 
   it('keeps the assigned coach with the class in class mode', () => {
     const input = makeInput({
-      slotCount: 4,
-      events: [event(1, 'Vault'), event(2, 'Beam')],
-      coaches: [{ id: 7, name: 'Riley Cho', specialties: [] }],
-      classes: [
-        cls(
-          1,
-          'Level 3',
-          [
-            { eventId: 1, duration: 30 },
-            { eventId: 2, duration: 30 },
-          ],
-          0,
-          [7],
-        ),
-      ],
+      events: [event(1, 'Vault')],
+      classes: [cls(1, 'A', [{ eventId: 1, duration: 30 }], 0, [7])],
+      coaches: [{ id: 7, name: 'Dana', specialties: [1] }],
+      placements: [place(1, 1)],
     })
-    const result = expectOk(input)
-    expect(result.assignments.every((a) => a.coachId === 7)).toBe(true)
+    expect(allBlocks(expectOk(input))[0]!.coachId).toBe(7)
   })
 
-  it('never double-books a shared coach; the loser gets no coach', () => {
+  it('never double-books one coach across two classes', () => {
     const input = makeInput({
-      slotCount: 1,
       events: [event(1, 'Vault'), event(2, 'Beam')],
-      coaches: [{ id: 7, name: 'Riley Cho', specialties: [] }],
       classes: [
-        cls(1, 'A', [{ eventId: 1, duration: 15 }], 0, [7]),
-        cls(2, 'B', [{ eventId: 2, duration: 15 }], 0, [7]),
+        cls(1, 'A', [{ eventId: 1, duration: 30 }], 0, [7]),
+        cls(2, 'B', [{ eventId: 2, duration: 30 }], 0, [7]),
       ],
+      coaches: [{ id: 7, name: 'Dana', specialties: [1, 2] }],
+      placements: [place(1, 1, '16:00', '16:30'), place(2, 2, '16:00', '16:30')],
     })
     const result = expectOk(input)
-    const withCoach = result.assignments.filter((a) => a.coachId === 7)
-    expect(withCoach).toHaveLength(1)
+    // Both need Dana at the same moment on different events — only one can
+    // have her, and the other is left unstaffed rather than double-booked.
+    const staffed = allBlocks(result).filter((b) => b.coachId === 7)
+    expect(staffed).toHaveLength(1)
   })
 
-  it('staffs events with specialists in event mode', () => {
+  it('packs blocks toward the start of the window, minimizing idle time', () => {
     const input = makeInput({
-      slotCount: 2,
-      coachMode: 'event',
       events: [event(1, 'Vault'), event(2, 'Beam')],
-      coaches: [
-        { id: 7, name: 'Riley Cho', specialties: [2] },
-        { id: 8, name: 'Sam Ortiz', specialties: [1] },
-      ],
       classes: [
         cls(1, 'A', [
-          { eventId: 1, duration: 15 },
-          { eventId: 2, duration: 15 },
+          { eventId: 1, duration: 30 },
+          { eventId: 2, duration: 30 },
         ]),
       ],
+      placements: [place(1, 1, '16:00', '18:00')],
     })
-    const result = expectOk(input)
-    for (const a of result.assignments) {
-      expect(a.coachId).toBe(a.eventId === 1 ? 8 : 7)
-    }
+    const blocks = allBlocks(expectOk(input)).sort((a, b) => a.startMin - b.startMin)
+    expect(blocks[0]!.startMin).toBe(T('16:00'))
+    expect(blocks[1]!.startMin).toBe(blocks[0]!.endMin) // no gap
   })
 })
 
 describe('determinism', () => {
-  const input = makeInput({
-    slotCount: 8,
-    events: [event(1, 'Vault'), event(2, 'Beam'), event(3, 'Floor', 2)],
-    coaches: [
-      { id: 1, name: 'A', specialties: [1] },
-      { id: 2, name: 'B', specialties: [2, 3] },
-    ],
-    classes: [
-      cls(1, 'G1', [
-        { eventId: 1, duration: 30 },
-        { eventId: 3, duration: 30 },
-      ], 1, [1]),
-      cls(2, 'G2', [
-        { eventId: 2, duration: 45 },
-        { eventId: 3, duration: 15 },
-      ], 2, [2]),
-      cls(3, 'G3', [
-        { eventId: 1, duration: 15 },
-        { eventId: 2, duration: 30 },
-      ], 1),
-    ],
+  it('same input and seed, same schedule', () => {
+    const input = makeInput({
+      events: [event(1, 'V'), event(2, 'B'), event(3, 'F')],
+      classes: [1, 2, 3].map((i) =>
+        cls(i, `C${i}`, [
+          { eventId: 1, duration: 30 },
+          { eventId: 2, duration: 30 },
+          { eventId: 3, duration: 30 },
+        ]),
+      ),
+      placements: [place(1, 1), place(2, 2), place(3, 3)],
+      seed: 42,
+    })
+    expect(generateSchedule(input)).toEqual(generateSchedule(input))
   })
 
-  it('same seed, same schedule', () => {
-    for (const seed of [1, 42, 12345]) {
-      const first = generateSchedule({ ...input, seed })
-      const second = generateSchedule({ ...input, seed })
-      expect(second).toEqual(first)
+  it('a different seed is still valid', () => {
+    const base = {
+      events: [event(1, 'V'), event(2, 'B')],
+      classes: [1, 2].map((i) =>
+        cls(i, `C${i}`, [
+          { eventId: 1, duration: 30 },
+          { eventId: 2, duration: 30 },
+        ]),
+      ),
+      placements: [place(1, 1), place(2, 2)],
     }
-  })
-
-  it('different seeds still satisfy all hard constraints', () => {
-    for (let seed = 1; seed <= 20; seed++) {
-      expectOk({ ...input, seed })
-    }
+    expectOk(makeInput({ ...base, seed: 1 }))
+    expectOk(makeInput({ ...base, seed: 999 }))
   })
 })

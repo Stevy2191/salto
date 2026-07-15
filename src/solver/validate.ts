@@ -1,76 +1,119 @@
 // Independent hard-constraint checker used by the test suite to audit
 // solver output. Deliberately written as a separate, straightforward pass —
 // not sharing solver internals — so tests cross-check two implementations.
-import type { Assignment } from '../../shared/types.ts'
-import type { SolverInput } from './types.ts'
+import { SLOT_MINUTES, overlaps } from '../../shared/slots.ts'
+import type { SolverInput, SolverPlacementResult } from './types.ts'
 
 export function hardConstraintViolations(
   input: SolverInput,
-  assignments: Assignment[],
+  result: SolverPlacementResult[],
 ): string[] {
   const violations: string[] = []
   const eventById = new Map(input.events.map((e) => [e.id, e]))
+  const classById = new Map(input.classes.map((c) => [c.id, c]))
+  const placementById = new Map(input.placements.map((p) => [p.id, p]))
 
-  // 1. Capacity per (event, slot).
-  const use = new Map<string, number>()
-  for (const a of assignments) {
-    const key = `${a.eventId}:${a.slotIndex}`
-    use.set(key, (use.get(key) ?? 0) + 1)
-  }
-  for (const [key, count] of use) {
-    const eventId = Number(key.split(':')[0])
-    const event = eventById.get(eventId)
-    // Unknown events default to capacity 1; a null capacity is unlimited.
-    const capacity = event ? (event.capacity ?? Infinity) : 1
-    if (count > capacity) violations.push(`event ${eventId} over capacity: ${key}`)
-  }
+  const each = result.flatMap((r) =>
+    r.blocks.map((b) => ({ ...b, placementId: r.placementId })),
+  )
 
-  // 2. Class in one place per slot.
-  const classAt = new Map<string, number>()
-  for (const a of assignments) {
-    const key = `${a.classId}:${a.slotIndex}`
-    const prev = classAt.get(key)
-    if (prev !== undefined && prev !== a.eventId) {
-      violations.push(`class ${a.classId} in two places at slot ${a.slotIndex}`)
+  // 6. Blocks stay inside their placement's window, and are well-formed.
+  for (const b of each) {
+    const p = placementById.get(b.placementId)
+    if (!p) {
+      violations.push(`block on unknown placement ${b.placementId}`)
+      continue
     }
-    classAt.set(key, a.eventId)
-  }
-
-  // 3. Coach in one place per slot.
-  const coachAt = new Map<string, number>()
-  for (const a of assignments) {
-    if (a.coachId === null) continue
-    const key = `${a.coachId}:${a.slotIndex}`
-    const prev = coachAt.get(key)
-    if (prev !== undefined && prev !== a.eventId) {
-      violations.push(`coach ${a.coachId} in two places at slot ${a.slotIndex}`)
+    if (b.startMin < p.startMin || b.endMin > p.endMin) {
+      violations.push(`block escapes placement ${p.id}'s window`)
     }
-    coachAt.set(key, a.eventId)
+    if (b.endMin <= b.startMin) violations.push(`empty block on placement ${p.id}`)
+    if (b.startMin % SLOT_MINUTES !== 0 || b.endMin % SLOT_MINUTES !== 0) {
+      violations.push(`block off the ${SLOT_MINUTES}-minute axis on placement ${p.id}`)
+    }
   }
 
-  // 4. Required events fulfilled with full durations.
-  for (const cls of input.classes) {
+  // 2. A class is in one place at a time: a placement's blocks never overlap.
+  for (const r of result) {
+    const ordered = [...r.blocks].sort((a, b) => a.startMin - b.startMin)
+    for (let i = 1; i < ordered.length; i++) {
+      if (overlaps(ordered[i - 1]!.startMin, ordered[i - 1]!.endMin, ordered[i]!.startMin, ordered[i]!.endMin)) {
+        violations.push(`placement ${r.placementId} has overlapping blocks`)
+      }
+    }
+  }
+
+  // 1 & 3: capacity and coaches, swept per slot.
+  const slots = new Map<number, { eventId: number; coachId: number | null; placementId: number }[]>()
+  for (const b of each) {
+    for (let t = b.startMin; t < b.endMin; t += SLOT_MINUTES) {
+      slots.set(t, [
+        ...(slots.get(t) ?? []),
+        { eventId: b.eventId, coachId: b.coachId, placementId: b.placementId },
+      ])
+    }
+  }
+  for (const [t, live] of slots) {
+    const byEvent = new Map<number, Set<number>>()
+    for (const l of live) {
+      const set = byEvent.get(l.eventId) ?? new Set<number>()
+      set.add(l.placementId)
+      byEvent.set(l.eventId, set)
+    }
+    for (const [eventId, users] of byEvent) {
+      const capacity = eventById.get(eventId)?.capacity
+      if (capacity !== null && capacity !== undefined && users.size > capacity) {
+        violations.push(`event ${eventId} over capacity at ${t}`)
+      }
+    }
+    const byCoach = new Map<number, Set<number>>()
+    for (const l of live) {
+      if (l.coachId === null) continue
+      const set = byCoach.get(l.coachId) ?? new Set<number>()
+      set.add(l.eventId)
+      byCoach.set(l.coachId, set)
+    }
+    for (const [coachId, events] of byCoach) {
+      if (events.size > 1) violations.push(`coach ${coachId} in two places at ${t}`)
+    }
+  }
+
+  // 4. Required events fulfilled with their full durations, per placement.
+  for (const p of input.placements) {
+    const cls = classById.get(p.classId)
+    if (!cls) continue
+    const blocks = result.find((r) => r.placementId === p.id)?.blocks ?? []
     for (const req of cls.requiredEvents) {
-      const needed = req.duration / input.rotationLength
-      const got = assignments.filter(
-        (a) => a.classId === cls.id && a.eventId === req.eventId,
-      ).length
-      if (got < needed) {
+      const got = blocks
+        .filter((b) => b.eventId === req.eventId)
+        .reduce((sum, b) => sum + (b.endMin - b.startMin), 0)
+      if (got < req.duration) {
         violations.push(
-          `class ${cls.id} got ${got}/${needed} slots on event ${req.eventId}`,
+          `placement ${p.id} got ${got}/${req.duration} min on event ${req.eventId}`,
         )
       }
     }
   }
 
-  // 5. Inactive events never scheduled; slots inside the window.
-  for (const a of assignments) {
-    const event = eventById.get(a.eventId)
+  // 5. Inactive or unknown events are never scheduled.
+  for (const b of each) {
+    const event = eventById.get(b.eventId)
     if (!event || !event.active) {
-      violations.push(`assignment on inactive/unknown event ${a.eventId}`)
+      violations.push(`block on inactive/unknown event ${b.eventId}`)
     }
-    if (a.slotIndex < 0 || a.slotIndex >= input.slotCount) {
-      violations.push(`assignment outside the session window at slot ${a.slotIndex}`)
+  }
+
+  // Locked blocks survive untouched.
+  for (const p of input.placements) {
+    const blocks = result.find((r) => r.placementId === p.id)?.blocks ?? []
+    for (const locked of p.locked) {
+      const kept = blocks.some(
+        (b) =>
+          b.eventId === locked.eventId &&
+          b.startMin === locked.startMin &&
+          b.endMin === locked.endMin,
+      )
+      if (!kept) violations.push(`placement ${p.id} lost a locked block`)
     }
   }
 

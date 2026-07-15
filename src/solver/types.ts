@@ -1,7 +1,12 @@
 // Solver input/output types. The solver is pure: plain data in, a schedule
 // or failure explanation out. No UI, DOM, or database imports anywhere in
 // src/solver/.
-import type { AdjacencyPenalty, Assignment, CoachMode } from '../../shared/types.ts'
+//
+// The solver fills events inside each *placement* — a class in a column for
+// its own window — not across the whole session. Generation is secondary to
+// hand-painting, so it only ever deals in whole blocks the same shape the
+// grid stores.
+import type { AdjacencyPenalty, CoachMode } from '../../shared/types.ts'
 
 export type { AdjacencyPenalty }
 
@@ -17,6 +22,7 @@ export interface SolverClass {
   id: number
   name: string
   priority: number
+  /** Optional: a class with none is simply left alone. */
   requiredEvents: { eventId: number; duration: number }[]
   assignedCoaches: number[]
 }
@@ -27,24 +33,43 @@ export interface SolverCoach {
   specialties: number[]
 }
 
+/** An event block, in minutes since midnight, snapped to SLOT_MINUTES. */
+export interface SolverBlock {
+  eventId: number
+  coachId: number | null
+  startMin: number
+  endMin: number
+}
+
+/** A class sitting in a column for its own window. */
+export interface SolverPlacement {
+  id: number
+  classId: number
+  startMin: number
+  endMin: number
+  /** Blocks to preserve exactly; generation plans around them. */
+  locked: SolverBlock[]
+}
+
 export interface SolverInput {
   events: SolverEvent[]
   classes: SolverClass[]
   coaches: SolverCoach[]
-  /** Number of rotation slots in the session window. */
-  slotCount: number
-  /** Minutes per slot; required-event durations must be multiples of it. */
-  rotationLength: number
+  placements: SolverPlacement[]
   coachMode: CoachMode
   adjacencyPenalties: AdjacencyPenalty[]
-  /** Pre-placed assignments that must be preserved exactly. */
-  locked: Assignment[]
   seed: number
+}
+
+export interface SolverPlacementResult {
+  placementId: number
+  /** Locked blocks plus generated ones, ordered by start. */
+  blocks: SolverBlock[]
 }
 
 export interface SolverSuccess {
   ok: true
-  assignments: Assignment[]
+  placements: SolverPlacementResult[]
   seed: number
 }
 

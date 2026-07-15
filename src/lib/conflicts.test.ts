@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { Assignment, GymEvent } from '../../shared/types.ts'
-import { assignmentKey, findConflicts } from './conflicts.ts'
+import type { EventBlock, GymEvent, Placement, Schedule } from '../../shared/types.ts'
+import { findConflicts } from './conflicts.ts'
 
 const event = (id: number, capacity: number | null = 1, active = true): GymEvent => ({
   id,
@@ -11,100 +11,187 @@ const event = (id: number, capacity: number | null = 1, active = true): GymEvent
   isSample: false,
 })
 
-const a = (
-  slotIndex: number,
+let nextId = 1
+const block = (
   eventId: number,
-  classId: number,
+  startMin: number,
+  endMin: number,
   coachId: number | null = null,
-): Assignment => ({ slotIndex, eventId, classId, coachId })
+): EventBlock => ({ id: nextId++, eventId, coachId, startMin, endMin, locked: false })
 
-describe('findConflicts', () => {
-  it('returns empty for a clean schedule', () => {
-    const conflicts = findConflicts(
-      [a(0, 1, 1, 1), a(0, 2, 2, 2), a(1, 1, 2, 2), a(1, 2, 1, 1)],
+const placement = (
+  classId: number,
+  columnIndex: number,
+  startMin: number,
+  endMin: number,
+  blocks: EventBlock[] = [],
+): Placement => ({ id: nextId++, classId, columnIndex, startMin, endMin, blocks })
+
+const schedule = (placements: Placement[]): Schedule => ({ placements })
+
+describe('lane rules', () => {
+  it('accepts classes stacked back to back in one column', () => {
+    const found = findConflicts(
+      schedule([placement(1, 0, 960, 1020), placement(2, 0, 1020, 1080)]),
+      [event(1)],
+    )
+    expect(found.count).toBe(0)
+  })
+
+  it('flags two classes overlapping in the same column', () => {
+    const a = placement(1, 0, 960, 1020)
+    const b = placement(2, 0, 1000, 1080)
+    const found = findConflicts(schedule([a, b]), [event(1)])
+    expect(found.placements.get(a.id)).toContain('column-overlap')
+    expect(found.placements.get(b.id)).toContain('column-overlap')
+  })
+
+  it('allows the same overlap across different columns', () => {
+    const found = findConflicts(
+      schedule([placement(1, 0, 960, 1020), placement(2, 1, 1000, 1080)]),
+      [event(1)],
+    )
+    expect(found.count).toBe(0)
+  })
+
+  it('flags one class placed in two columns at overlapping times', () => {
+    const a = placement(7, 0, 960, 1020)
+    const b = placement(7, 1, 1000, 1080)
+    const found = findConflicts(schedule([a, b]), [event(1)])
+    expect(found.placements.get(a.id)).toContain('class-double-booked')
+    expect(found.placements.get(b.id)).toContain('class-double-booked')
+  })
+
+  it('lets one class appear twice in a session at different times', () => {
+    const found = findConflicts(
+      schedule([placement(7, 0, 960, 1020), placement(7, 1, 1020, 1080)]),
+      [event(1)],
+    )
+    expect(found.count).toBe(0)
+  })
+})
+
+describe('coaches', () => {
+  it('flags a coach on two events at the same moment', () => {
+    const one = block(1, 960, 1020, 7)
+    const two = block(2, 1000, 1080, 7)
+    const found = findConflicts(
+      schedule([placement(1, 0, 960, 1080, [one]), placement(2, 1, 960, 1080, [two])]),
       [event(1), event(2)],
     )
-    expect(conflicts.size).toBe(0)
+    expect(found.blocks.get(one.id)).toContain('coach-double-booked')
+    expect(found.blocks.get(two.id)).toContain('coach-double-booked')
   })
 
-  it('flags a class booked on two events in the same slot', () => {
-    const one = a(0, 1, 1)
-    const two = a(0, 2, 1)
-    const conflicts = findConflicts([one, two], [event(1), event(2)])
-    expect(conflicts.get(assignmentKey(one))).toContain('class-double-booked')
-    expect(conflicts.get(assignmentKey(two))).toContain('class-double-booked')
-  })
-
-  it('does not flag the same class in the same slot across different slots', () => {
-    const conflicts = findConflicts([a(0, 1, 1), a(1, 2, 1)], [event(1), event(2)])
-    expect(conflicts.size).toBe(0)
-  })
-
-  it('flags a coach on two events in the same slot', () => {
-    const one = a(0, 1, 1, 7)
-    const two = a(0, 2, 2, 7)
-    const conflicts = findConflicts([one, two], [event(1), event(2)])
-    expect(conflicts.get(assignmentKey(one))).toContain('coach-double-booked')
-    expect(conflicts.get(assignmentKey(two))).toContain('coach-double-booked')
-  })
-
-  it('allows one coach with two classes at the same event', () => {
-    const conflicts = findConflicts(
-      [a(0, 1, 1, 7), a(0, 1, 2, 7)],
+  it('allows one coach running two classes at the same event — one station', () => {
+    const one = block(1, 960, 1020, 7)
+    const two = block(1, 960, 1020, 7)
+    const found = findConflicts(
+      schedule([placement(1, 0, 960, 1080, [one]), placement(2, 1, 960, 1080, [two])]),
       [event(1, 2)],
     )
-    expect(conflicts.size).toBe(0)
+    expect(found.count).toBe(0)
   })
 
-  it('ignores unassigned coaches', () => {
-    const conflicts = findConflicts(
-      [a(0, 1, 1, null), a(0, 2, 2, null)],
+  it('allows a coach back to back on different events', () => {
+    const one = block(1, 960, 1020, 7)
+    const two = block(2, 1020, 1080, 7)
+    const found = findConflicts(
+      schedule([placement(1, 0, 960, 1080, [one]), placement(2, 1, 960, 1080, [two])]),
       [event(1), event(2)],
     )
-    expect(conflicts.size).toBe(0)
+    expect(found.count).toBe(0)
   })
 
-  it('flags an event over capacity', () => {
-    const one = a(0, 1, 1)
-    const two = a(0, 1, 2)
-    const conflicts = findConflicts([one, two], [event(1, 1)])
-    expect(conflicts.get(assignmentKey(one))).toContain('over-capacity')
-    expect(conflicts.get(assignmentKey(two))).toContain('over-capacity')
+  it('ignores unstaffed blocks', () => {
+    const found = findConflicts(
+      schedule([
+        placement(1, 0, 960, 1080, [block(1, 960, 1020)]),
+        placement(2, 1, 960, 1080, [block(2, 960, 1020)]),
+      ]),
+      [event(1), event(2)],
+    )
+    expect(found.count).toBe(0)
+  })
+})
+
+describe('event capacity', () => {
+  it('flags more simultaneous classes than the event fits', () => {
+    const one = block(1, 960, 1020)
+    const two = block(1, 1000, 1080)
+    const found = findConflicts(
+      schedule([placement(1, 0, 960, 1080, [one]), placement(2, 1, 960, 1080, [two])]),
+      [event(1, 1)],
+    )
+    expect(found.blocks.get(one.id)).toContain('over-capacity')
+    expect(found.blocks.get(two.id)).toContain('over-capacity')
   })
 
-  it('respects capacity greater than one', () => {
-    const conflicts = findConflicts([a(0, 1, 1), a(0, 1, 2)], [event(1, 2)])
-    expect(conflicts.size).toBe(0)
+  it('respects a capacity above one', () => {
+    const found = findConflicts(
+      schedule([
+        placement(1, 0, 960, 1080, [block(1, 960, 1020)]),
+        placement(2, 1, 960, 1080, [block(1, 960, 1020)]),
+      ]),
+      [event(1, 2)],
+    )
+    expect(found.count).toBe(0)
   })
 
-  it('never flags over-capacity on an event with no limit', () => {
-    const conflicts = findConflicts(
-      [a(0, 1, 1), a(0, 1, 2), a(0, 1, 3), a(0, 1, 4)],
+  it('never flags an event with no limit', () => {
+    const found = findConflicts(
+      schedule([
+        placement(1, 0, 960, 1080, [block(1, 960, 1020)]),
+        placement(2, 1, 960, 1080, [block(1, 960, 1020)]),
+        placement(3, 2, 960, 1080, [block(1, 960, 1020)]),
+      ]),
       [event(1, null)],
     )
-    expect(conflicts.size).toBe(0)
+    expect(found.count).toBe(0)
   })
 
-  it('flags assignments on an inactive event', () => {
-    const one = a(0, 1, 1)
-    const conflicts = findConflicts([one], [event(1, 1, false)])
-    expect(conflicts.get(assignmentKey(one))).toContain('event-inactive')
+  it('does not flag classes that merely share an event at different times', () => {
+    const found = findConflicts(
+      schedule([
+        placement(1, 0, 960, 1080, [block(1, 960, 1020)]),
+        placement(2, 1, 960, 1080, [block(1, 1020, 1080)]),
+      ]),
+      [event(1, 1)],
+    )
+    expect(found.count).toBe(0)
+  })
+})
+
+describe('inactive events', () => {
+  it('flags a block on an inactive event', () => {
+    const one = block(1, 960, 1020)
+    const found = findConflicts(schedule([placement(1, 0, 960, 1080, [one])]), [event(1, 1, false)])
+    expect(found.blocks.get(one.id)).toContain('event-inactive')
   })
 
-  it('flags assignments on a deleted (unknown) event', () => {
-    const one = a(0, 99, 1)
-    const conflicts = findConflicts([one], [event(1)])
-    expect(conflicts.get(assignmentKey(one))).toContain('event-inactive')
+  it('flags a block on a deleted (unknown) event', () => {
+    const one = block(99, 960, 1020)
+    const found = findConflicts(schedule([placement(1, 0, 960, 1080, [one])]), [event(1)])
+    expect(found.blocks.get(one.id)).toContain('event-inactive')
   })
+})
 
-  it('accumulates multiple reasons on one assignment', () => {
-    const one = a(0, 1, 1)
-    const two = a(0, 1, 2)
-    const three = a(0, 2, 1)
-    const conflicts = findConflicts([one, two, three], [event(1, 1, false), event(2)])
-    const reasons = conflicts.get(assignmentKey(one))!
-    expect(reasons).toContain('over-capacity')
+describe('multiple reasons', () => {
+  it('accumulates every reason on one block', () => {
+    const one = block(1, 960, 1020, 7)
+    const two = block(2, 960, 1020, 7)
+    const three = block(1, 960, 1020)
+    const found = findConflicts(
+      schedule([
+        placement(1, 0, 960, 1080, [one]),
+        placement(2, 1, 960, 1080, [two]),
+        placement(3, 2, 960, 1080, [three]),
+      ]),
+      [event(1, 1, false), event(2)],
+    )
+    const reasons = found.blocks.get(one.id)!
     expect(reasons).toContain('event-inactive')
-    expect(reasons).toContain('class-double-booked')
+    expect(reasons).toContain('over-capacity')
+    expect(reasons).toContain('coach-double-booked')
   })
 })

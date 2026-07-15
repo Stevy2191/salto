@@ -4,13 +4,15 @@ import { generateSchedule } from './solver.ts'
 import { hardConstraintViolations } from './validate.ts'
 import type { SolverInput } from './types.ts'
 
-// Random-but-plausible gym setups. Durations are always multiples of the
-// rotation length; feasibility is NOT guaranteed — the property is that the
-// solver either returns a valid schedule or explains why not.
+// Random-but-plausible gym setups on the lane model. Durations are always
+// multiples of 5; windows are arbitrary sub-spans of a 16:00–20:00 session.
+// Feasibility is NOT guaranteed — the property is that the solver either
+// returns a valid schedule or explains why not.
+const DAY_START = 16 * 60
+
 const arbInput: fc.Arbitrary<SolverInput> = fc
   .record({
     eventCount: fc.integer({ min: 1, max: 6 }),
-    // null = unlimited simultaneous classes.
     capacities: fc.array(fc.constantFrom<number | null>(1, 2, null), { minLength: 6, maxLength: 6 }),
     inactiveMask: fc.array(fc.boolean(), { minLength: 6, maxLength: 6 }),
     classCount: fc.integer({ min: 1, max: 8 }),
@@ -25,9 +27,15 @@ const arbInput: fc.Arbitrary<SolverInput> = fc
       { minLength: 8, maxLength: 8 },
     ),
     priorities: fc.array(fc.integer({ min: 0, max: 5 }), { minLength: 8, maxLength: 8 }),
+    // Each class gets its own window: an offset and a length, in 5-min slots.
+    windows: fc.array(
+      fc.record({
+        startSlot: fc.integer({ min: 0, max: 24 }),
+        lengthSlots: fc.integer({ min: 1, max: 24 }),
+      }),
+      { minLength: 8, maxLength: 8 },
+    ),
     coachCount: fc.integer({ min: 0, max: 4 }),
-    slotCount: fc.integer({ min: 3, max: 14 }),
-    rotationLength: fc.constantFrom(5, 10, 15, 30),
     coachMode: fc.constantFrom('class' as const, 'event' as const),
     seed: fc.integer({ min: 0, max: 2 ** 31 - 1 }),
   })
@@ -44,7 +52,7 @@ const arbInput: fc.Arbitrary<SolverInput> = fc
       const requiredEvents = raw.requirements[g]!
         .map((r) => ({
           eventId: (r.eventIndex % raw.eventCount) + 1,
-          duration: r.durationSlots * raw.rotationLength,
+          duration: r.durationSlots * 5,
         }))
         .filter((r) => (seen.has(r.eventId) ? false : (seen.add(r.eventId), true)))
       return {
@@ -60,15 +68,24 @@ const arbInput: fc.Arbitrary<SolverInput> = fc
       name: `Coach ${c + 1}`,
       specialties: events.filter((e) => e.id % raw.coachCount === c % raw.coachCount).map((e) => e.id),
     }))
+    const placements = classes.map((c, i) => {
+      const w = raw.windows[i]!
+      const startMin = DAY_START + w.startSlot * 5
+      return {
+        id: i + 1,
+        classId: c.id,
+        startMin,
+        endMin: startMin + w.lengthSlots * 5,
+        locked: [],
+      }
+    })
     return {
       events,
       classes,
       coaches,
-      slotCount: raw.slotCount,
-      rotationLength: raw.rotationLength,
+      placements,
       coachMode: raw.coachMode,
       adjacencyPenalties: [],
-      locked: [],
       seed: raw.seed,
     }
   })
@@ -79,10 +96,28 @@ describe('solver properties', () => {
       fc.property(arbInput, (input) => {
         const result = generateSchedule(input)
         if (result.ok) {
-          expect(hardConstraintViolations(input, result.assignments)).toEqual([])
+          expect(hardConstraintViolations(input, result.placements)).toEqual([])
         }
       }),
       { numRuns: 300 },
+    )
+  })
+
+  it('nothing an ok result places ever escapes its class window', () => {
+    fc.assert(
+      fc.property(arbInput, (input) => {
+        const result = generateSchedule(input)
+        if (!result.ok) return
+        const windowOf = new Map(input.placements.map((p) => [p.id, p]))
+        for (const r of result.placements) {
+          const w = windowOf.get(r.placementId)!
+          for (const b of r.blocks) {
+            expect(b.startMin).toBeGreaterThanOrEqual(w.startMin)
+            expect(b.endMin).toBeLessThanOrEqual(w.endMin)
+          }
+        }
+      }),
+      { numRuns: 200 },
     )
   })
 
