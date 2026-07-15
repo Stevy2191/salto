@@ -109,7 +109,7 @@ export function CoachesPage() {
       <PageHeader title="Coaches" />
       <ErrorNote message={coachesLoad.error ?? eventsLoad.error ?? actionError} />
       <Card>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
           Add coach
         </h2>
         <CoachForm
@@ -123,7 +123,7 @@ export function CoachesPage() {
       </Card>
       <Card>
         {coaches.length === 0 && <EmptyNote>No coaches yet.</EmptyNote>}
-        <ul className="divide-y divide-slate-100">
+        <ul className="divide-y divide-slate-100 dark:divide-slate-700">
           {coaches.map((coach) =>
             editingId === coach.id ? (
               <li key={coach.id} className="py-3">
@@ -141,13 +141,13 @@ export function CoachesPage() {
             ) : (
               <li key={coach.id} className="flex flex-wrap items-center gap-2 py-3">
                 <div className="flex-1">
-                  <span className="font-medium text-slate-900">{coach.name}</span>
+                  <span className="font-medium text-slate-900 dark:text-slate-100">{coach.name}</span>
                   {coach.isSample && (
-                    <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700">
+                    <span className="ml-2 rounded bg-amber-100 dark:bg-amber-900 px-1.5 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-200">
                       sample
                     </span>
                   )}
-                  <p className="text-sm text-slate-500">
+                  <p className="text-sm text-slate-500 dark:text-slate-400">
                     {coach.specialties.length > 0
                       ? coach.specialties.map(eventName).filter(Boolean).join(', ')
                       : 'no specialties set'}

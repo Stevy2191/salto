@@ -161,7 +161,7 @@ export function SessionsPage() {
       <PageHeader title="Sessions" />
       <ErrorNote message={sessionsLoad.error ?? classesLoad.error ?? actionError} />
       <Card>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
           Add session
         </h2>
         <SessionForm
@@ -175,7 +175,7 @@ export function SessionsPage() {
       </Card>
       <Card>
         {sessions.length === 0 && <EmptyNote>No sessions yet.</EmptyNote>}
-        <ul className="divide-y divide-slate-100">
+        <ul className="divide-y divide-slate-100 dark:divide-slate-700">
           {sessions.map((session) =>
             editingId === session.id ? (
               <li key={session.id} className="py-3">
@@ -193,13 +193,13 @@ export function SessionsPage() {
             ) : (
               <li key={session.id} className="flex flex-wrap items-center gap-2 py-3">
                 <div className="flex-1">
-                  <span className="font-medium text-slate-900">{sessionLabel(session)}</span>
+                  <span className="font-medium text-slate-900 dark:text-slate-100">{sessionLabel(session)}</span>
                   {session.isSample && (
-                    <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700">
+                    <span className="ml-2 rounded bg-amber-100 dark:bg-amber-900 px-1.5 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-200">
                       sample
                     </span>
                   )}
-                  <p className="text-sm text-slate-500">
+                  <p className="text-sm text-slate-500 dark:text-slate-400">
                     {formatDateLong(session.date)} · {session.startTime}–{session.endTime} ·{' '}
                     {slotCount(session)} rotations of {session.rotationLength} min ·{' '}
                     {session.classes.length} class{session.classes.length === 1 ? '' : 'es'}

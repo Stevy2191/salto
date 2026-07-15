@@ -85,10 +85,10 @@ function AssignmentPicker({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-sm space-y-3 rounded-xl bg-white p-4 shadow-lg"
+        className="w-full max-w-sm space-y-3 rounded-xl bg-white dark:bg-slate-800 p-4 shadow-lg"
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 className="font-semibold text-slate-900">Assign — {title}</h2>
+        <h2 className="font-semibold text-slate-900 dark:text-slate-100">Assign — {title}</h2>
         {needsClass && (
           <Field label="Class">
             <Select value={classId ?? ''} onChange={(e) => setClassId(Number(e.target.value))}>
@@ -187,7 +187,7 @@ function Chip({
       style={style}
       className={`flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium ring-1 ${
         conflicted
-          ? 'bg-red-100 text-red-900 ring-2 ring-red-500'
+          ? 'bg-red-100 dark:bg-red-900 text-red-900 dark:text-red-100 ring-2 ring-red-500'
           : customColor
             ? 'ring-black/10'
             : colorClass
@@ -469,7 +469,7 @@ export function SchedulePage() {
         <td
           key={key}
           className={`min-w-28 rounded-lg p-1 align-top ring-1 ${
-            conflicted ? 'bg-red-50 ring-red-400' : 'bg-white ring-slate-200'
+            conflicted ? 'bg-red-50 dark:bg-red-950 ring-red-400 dark:ring-red-700' : 'bg-white dark:bg-slate-800 ring-slate-200 dark:ring-slate-700'
           }`}
         >
           <div
@@ -477,7 +477,7 @@ export function SchedulePage() {
             style={color ? { backgroundColor: color } : undefined}
             className={`min-h-12 rounded-md ${
               conflicted
-                ? 'bg-red-100 ring-2 ring-red-500'
+                ? 'bg-red-100 dark:bg-red-900 ring-2 ring-red-500'
                 : outage
                   ? 'ring-2 ring-amber-500'
                   : 'ring-1 ring-black/10'
@@ -491,7 +491,7 @@ export function SchedulePage() {
       <td
         key={key}
         className={`min-w-28 rounded-lg p-1 align-top ring-1 ${
-          conflicted ? 'bg-red-50 ring-red-400' : 'bg-white ring-slate-200'
+          conflicted ? 'bg-red-50 dark:bg-red-950 ring-red-400 dark:ring-red-700' : 'bg-white dark:bg-slate-800 ring-slate-200 dark:ring-slate-700'
         }`}
       >
         <div className="flex min-h-12 flex-col gap-1">
@@ -514,7 +514,7 @@ export function SchedulePage() {
             <button
               onClick={() => setPicker(target)}
               aria-label="assign here"
-              className="min-h-6 flex-1 rounded text-sm text-slate-300 hover:bg-slate-100 hover:text-slate-500"
+              className="min-h-6 flex-1 rounded text-sm text-slate-300 dark:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-500 dark:hover:text-slate-400"
             >
               +
             </button>
@@ -530,7 +530,7 @@ export function SchedulePage() {
       <td
         key={`${target.slotIndex}:${target.eventId ?? 'g'}:${target.classId ?? 'e'}`}
         className={`min-w-28 rounded-lg p-1 align-top ring-1 ${
-          conflicted ? 'bg-red-50 ring-red-400' : 'bg-white ring-slate-200'
+          conflicted ? 'bg-red-50 dark:bg-red-950 ring-red-400 dark:ring-red-700' : 'bg-white dark:bg-slate-800 ring-slate-200 dark:ring-slate-700'
         }`}
       >
         <div className="flex min-h-12 flex-col gap-1">
@@ -556,7 +556,7 @@ export function SchedulePage() {
           <button
             onClick={() => setPicker(target)}
             aria-label="assign here"
-            className="min-h-6 flex-1 rounded text-sm text-slate-300 hover:bg-slate-100 hover:text-slate-500"
+            className="min-h-6 flex-1 rounded text-sm text-slate-300 dark:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-500 dark:hover:text-slate-400"
           >
             +
           </button>
@@ -568,8 +568,8 @@ export function SchedulePage() {
   return (
     <div className="space-y-4">
       {showWelcome && (
-        <div className="flex flex-wrap items-center gap-3 rounded-xl bg-indigo-50 p-4 ring-1 ring-indigo-200">
-          <p className="flex-1 text-sm text-indigo-900">
+        <div className="flex flex-wrap items-center gap-3 rounded-xl bg-indigo-50 dark:bg-indigo-950 p-4 ring-1 ring-indigo-200 dark:ring-indigo-800">
+          <p className="flex-1 text-sm text-indigo-900 dark:text-indigo-100">
             🎉 <span className="font-semibold">Setup complete</span> — this is your schedule
             grid. Hit <span className="font-semibold">Generate schedule</span> to auto-fill the
             rotation, or tap any <span className="font-semibold">+</span> cell to assign a class
@@ -584,37 +584,41 @@ export function SchedulePage() {
         <div className="flex items-center gap-3">
           <button
             onClick={() => setCopyOpen(true)}
-            className="min-h-10 rounded-lg bg-white px-3 py-2 text-sm font-semibold text-slate-700 ring-1 ring-slate-300 hover:bg-slate-50"
+            className="min-h-10 rounded-lg bg-white dark:bg-slate-800 px-3 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200 ring-1 ring-slate-300 dark:ring-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700"
           >
             Copy session
           </button>
           <Link
             to={`/sessions/${sessionId}/print`}
-            className="min-h-10 rounded-lg bg-white px-3 py-2 text-sm font-semibold text-slate-700 ring-1 ring-slate-300 hover:bg-slate-50"
+            className="min-h-10 rounded-lg bg-white dark:bg-slate-800 px-3 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200 ring-1 ring-slate-300 dark:ring-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700"
           >
             Print
           </Link>
           <a
             href={`/api/sessions/${sessionId}/export`}
             download
-            className="min-h-10 rounded-lg bg-white px-3 py-2 text-sm font-semibold text-slate-700 ring-1 ring-slate-300 hover:bg-slate-50"
+            className="min-h-10 rounded-lg bg-white dark:bg-slate-800 px-3 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200 ring-1 ring-slate-300 dark:ring-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700"
           >
             Export to Excel
           </a>
           <span
             className={`text-sm ${
-              saveState === 'error' ? 'font-medium text-red-600' : 'text-slate-500'
+              saveState === 'error' ? 'font-medium text-red-600 dark:text-red-400' : 'text-slate-500 dark:text-slate-400'
             }`}
           >
             {saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? 'Saved' : 'Save failed'}
           </span>
-          <div className="flex rounded-lg bg-slate-200 p-0.5">
+          {/* Recessed track, raised pill — so the selected view still reads
+              as the raised one once the palette flips. */}
+          <div className="flex rounded-lg bg-slate-200 p-0.5 dark:bg-slate-800">
             {(['events', 'classes'] as const).map((mode) => (
               <button
                 key={mode}
                 onClick={() => setView(mode)}
                 className={`min-h-10 rounded-md px-3 py-1.5 text-sm font-medium capitalize ${
-                  view === mode ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'
+                  view === mode
+                    ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-600 dark:text-slate-50'
+                    : 'text-slate-600 dark:text-slate-300'
                 }`}
               >
                 By {mode}
@@ -635,11 +639,11 @@ export function SchedulePage() {
             )}
           </>
         )}
-        <p className="text-sm text-slate-500">
+        <p className="text-sm text-slate-500 dark:text-slate-400">
           {formatDateLong(session.date)} · {session.startTime}–{session.endTime} · {slots}{' '}
           rotations of {session.rotationLength} min
           {conflictCount > 0 && (
-            <span className="ml-2 font-medium text-red-600">
+            <span className="ml-2 font-medium text-red-600 dark:text-red-400">
               ⚠ {conflictCount} conflicting assignment{conflictCount === 1 ? '' : 's'}
             </span>
           )}
@@ -649,12 +653,12 @@ export function SchedulePage() {
 
       <details
         open={outagesActive}
-        className="rounded-xl bg-white p-4 ring-1 ring-slate-200"
+        className="rounded-xl bg-white dark:bg-slate-800 p-4 ring-1 ring-slate-200 dark:ring-slate-700"
       >
-        <summary className="cursor-pointer text-sm font-semibold text-slate-700">
+        <summary className="cursor-pointer text-sm font-semibold text-slate-700 dark:text-slate-200">
           Day-of changes
           {affectedCount > 0 && (
-            <span className="ml-2 font-medium text-amber-600">
+            <span className="ml-2 font-medium text-amber-600 dark:text-amber-400">
               ⚠ {affectedCount} assignment{affectedCount === 1 ? '' : 's'} affected
             </span>
           )}
@@ -681,7 +685,7 @@ export function SchedulePage() {
           {outagesActive && (
             <div className="flex flex-wrap items-center gap-3">
               <Button onClick={repair}>Repair schedule</Button>
-              <p className="text-sm text-slate-500">
+              <p className="text-sm text-slate-500 dark:text-slate-400">
                 Keeps everything unaffected in place; only fixes what the outage touches.
               </p>
             </div>
@@ -690,18 +694,18 @@ export function SchedulePage() {
       </details>
 
       {repairSummary && (
-        <div role="status" className="rounded-xl bg-emerald-50 p-4 ring-1 ring-emerald-200">
+        <div role="status" className="rounded-xl bg-emerald-50 dark:bg-emerald-950 p-4 ring-1 ring-emerald-200 dark:ring-emerald-800">
           <div className="flex items-start justify-between gap-2">
-            <p className="font-semibold text-emerald-900">Schedule repaired</p>
+            <p className="font-semibold text-emerald-900 dark:text-emerald-100">Schedule repaired</p>
             <button
               onClick={() => setRepairSummary(null)}
               aria-label="dismiss"
-              className="rounded px-1 text-emerald-400 hover:bg-emerald-100 hover:text-emerald-700"
+              className="rounded px-1 text-emerald-400 dark:text-emerald-500 hover:bg-emerald-100 dark:hover:bg-emerald-900 hover:text-emerald-700 dark:hover:text-emerald-300"
             >
               ×
             </button>
           </div>
-          <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-emerald-900">
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-emerald-900 dark:text-emerald-100">
             {repairSummary.map((line) => (
               <li key={line}>{line}</li>
             ))}
@@ -710,18 +714,18 @@ export function SchedulePage() {
       )}
 
       {generationErrors && (
-        <div role="alert" className="rounded-xl bg-red-50 p-4 ring-1 ring-red-200">
+        <div role="alert" className="rounded-xl bg-red-50 dark:bg-red-950 p-4 ring-1 ring-red-200 dark:ring-red-800">
           <div className="flex items-start justify-between gap-2">
-            <p className="font-semibold text-red-800">Couldn't generate a schedule</p>
+            <p className="font-semibold text-red-800 dark:text-red-300">Couldn't generate a schedule</p>
             <button
               onClick={() => setGenerationErrors(null)}
               aria-label="dismiss"
-              className="rounded px-1 text-red-400 hover:bg-red-100 hover:text-red-700"
+              className="rounded px-1 text-red-400 dark:text-red-500 hover:bg-red-100 dark:hover:bg-red-900 hover:text-red-700 dark:hover:text-red-300"
             >
               ×
             </button>
           </div>
-          <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-red-700">
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-red-700 dark:text-red-300">
             {generationErrors.map((reason) => (
               <li key={reason}>{reason}</li>
             ))}
@@ -731,9 +735,9 @@ export function SchedulePage() {
 
       {sessionClasses.length === 0 ? (
         <Card>
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-slate-600 dark:text-slate-300">
             This session has no classes yet.{' '}
-            <Link className="font-medium text-indigo-600" to="/sessions">
+            <Link className="font-medium text-indigo-600 dark:text-indigo-400" to="/sessions">
               Edit the session
             </Link>{' '}
             to add the classes that attend, then build the rotation here.
@@ -746,26 +750,26 @@ export function SchedulePage() {
           <table className="border-separate border-spacing-1">
             <thead>
               <tr>
-                <th className="sticky left-0 z-[5] w-16 bg-slate-100 p-1 text-left text-xs font-semibold text-slate-500">
+                <th className="sticky left-0 z-[5] w-16 bg-slate-100 dark:bg-slate-700 p-1 text-left text-xs font-semibold text-slate-500 dark:text-slate-400">
                   Time
                 </th>
                 {view === 'events'
                   ? rowEvents.map((event) => (
                       <th
                         key={event.id}
-                        className="min-w-28 p-1 text-left text-sm font-semibold text-slate-800"
+                        className="min-w-28 p-1 text-left text-sm font-semibold text-slate-800 dark:text-slate-100"
                       >
                         {event.name}
                         {!event.active && (
-                          <span className="block text-xs font-normal text-red-500">inactive</span>
+                          <span className="block text-xs font-normal text-red-500 dark:text-red-400">inactive</span>
                         )}
                         {downSet.has(event.id) && (
-                          <span className="block text-xs font-normal text-amber-600">
+                          <span className="block text-xs font-normal text-amber-600 dark:text-amber-400">
                             ⚠ out today
                           </span>
                         )}
                         {event.capacity !== null && event.capacity > 1 && (
-                          <span className="block text-xs font-normal text-slate-500">
+                          <span className="block text-xs font-normal text-slate-500 dark:text-slate-400">
                             fits {event.capacity}
                           </span>
                         )}
@@ -778,7 +782,7 @@ export function SchedulePage() {
                   : sessionClasses.map((cls) => (
                       <th
                         key={cls.id}
-                        className="min-w-28 p-1 text-left text-sm font-semibold text-slate-800"
+                        className="min-w-28 p-1 text-left text-sm font-semibold text-slate-800 dark:text-slate-100"
                       >
                         {cls.name}
                       </th>
@@ -788,7 +792,7 @@ export function SchedulePage() {
             <tbody>
               {slotIndexes.map((slotIndex) => (
                 <tr key={slotIndex}>
-                  <th className="sticky left-0 z-[5] bg-slate-100 p-1 text-left align-top text-xs font-semibold text-slate-500">
+                  <th className="sticky left-0 z-[5] bg-slate-100 dark:bg-slate-700 p-1 text-left align-top text-xs font-semibold text-slate-500 dark:text-slate-400">
                     {slotStart(session, slotIndex)}
                   </th>
                   {view === 'events'

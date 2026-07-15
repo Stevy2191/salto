@@ -2,7 +2,8 @@ import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 
 // One serial journey against a single fresh database: first-run wizard,
-// then generation + day-of repair, the print view, and session copying.
+// then generation + day-of repair, the print view, session copying, and
+// the dark mode toggle.
 test.describe.configure({ mode: 'serial' })
 
 async function login(page: Page) {
@@ -163,4 +164,47 @@ test('sessions list shows dates chronologically and copies from there too', asyn
   await page.getByRole('button', { name: 'Create copy' }).click()
   await expect(page).toHaveURL(/\/sessions\/\d+\/schedule$/)
   await expect(page.getByText(/Monday, March 16, 2026/)).toBeVisible()
+})
+
+test('dark mode toggles from the header, persists, and spares the print view', async ({
+  page,
+}) => {
+  await login(page)
+
+  const WHITE = 'rgb(255, 255, 255)'
+  const html = page.locator('html')
+  // Cards are white in light mode — a stand-in for "the app repainted".
+  const card = page.locator('div.rounded-xl.bg-white').first()
+
+  // Starts light: no saved choice, and headless Chromium reports light.
+  await expect(html).not.toHaveClass(/dark/)
+  await expect(card).toHaveCSS('background-color', WHITE)
+
+  // The sun shows in light mode; the label says where a click takes you.
+  await page.getByRole('button', { name: 'Switch to dark mode' }).click()
+
+  // Dark now: class set, native color-scheme flipped, surfaces repainted,
+  // and the button became the half moon.
+  await expect(html).toHaveClass(/dark/)
+  await expect(html).toHaveCSS('color-scheme', 'dark')
+  await expect(card).not.toHaveCSS('background-color', WHITE)
+  await expect(page.getByRole('button', { name: 'Switch to light mode' })).toBeVisible()
+
+  // The choice survives a reload (applied before first paint, so no flash).
+  await page.reload()
+  await expect(html).toHaveClass(/dark/)
+  await expect(page.getByRole('button', { name: 'Switch to light mode' })).toBeVisible()
+
+  // The print sheet stays black-on-white paper even while dark mode is on.
+  await page.goto('/sessions/1/print')
+  await expect(html).toHaveClass(/dark/)
+  await expect(page.locator('div.bg-white').first()).toHaveCSS('background-color', WHITE)
+  await expect(page.getByRole('heading', { name: 'Monday Practice' })).toBeVisible()
+
+  // Back to light, and that sticks too.
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Switch to light mode' }).click()
+  await page.reload()
+  await expect(html).not.toHaveClass(/dark/)
+  await expect(page.getByRole('button', { name: 'Switch to dark mode' })).toBeVisible()
 })

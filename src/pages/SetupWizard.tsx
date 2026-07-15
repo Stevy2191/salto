@@ -49,7 +49,7 @@ function ItemList({
 }) {
   if (items.length === 0) return null
   return (
-    <ul className="mt-4 divide-y divide-slate-100 border-t border-slate-100">
+    <ul className="mt-4 divide-y divide-slate-100 dark:divide-slate-700 border-t border-slate-100 dark:border-slate-700">
       {items.map((item) => (
         <li key={item.id} className="flex items-center gap-2 py-2">
           {item.swatch && (
@@ -58,10 +58,10 @@ function ItemList({
               style={{ backgroundColor: item.swatch }}
             />
           )}
-          <span className="flex-1 text-sm font-medium text-slate-800">{item.label}</span>
+          <span className="flex-1 text-sm font-medium text-slate-800 dark:text-slate-100">{item.label}</span>
           <button
             onClick={() => onDelete(item.id)}
-            className="min-h-9 rounded px-2 text-sm text-red-500 hover:bg-red-50"
+            className="min-h-9 rounded px-2 text-sm text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950"
           >
             Remove
           </button>
@@ -127,7 +127,7 @@ export function SetupWizard() {
       case 'events':
         return (
           <>
-            <p className="text-sm text-slate-600">
+            <p className="text-sm text-slate-600 dark:text-slate-300">
               Events are the stations classes rotate through. Most gyms have several — add as
               many as you like; one is enough to move on.
             </p>
@@ -147,7 +147,7 @@ export function SetupWizard() {
       case 'classes':
         return (
           <>
-            <p className="text-sm text-slate-600">
+            <p className="text-sm text-slate-600 dark:text-slate-300">
               Classes are who trains — "Level 3 Girls", "Boys Team". Set what each class needs
               in a session; you can refine durations later.
             </p>
@@ -170,7 +170,7 @@ export function SetupWizard() {
       case 'coaches':
         return (
           <>
-            <p className="text-sm text-slate-600">
+            <p className="text-sm text-slate-600 dark:text-slate-300">
               Add your coaches, what they coach, and the days they work. You can assign them to
               classes now or later.
             </p>
@@ -191,7 +191,7 @@ export function SetupWizard() {
       case 'session':
         return (
           <>
-            <p className="text-sm text-slate-600">
+            <p className="text-sm text-slate-600 dark:text-slate-300">
               A session is one practice on one date. Your classes are pre-selected — save it
               and you're done. Next week, copy it onto the new date rather than starting over.
             </p>
@@ -223,7 +223,7 @@ export function SetupWizard() {
   return (
     <div className="mx-auto max-w-2xl space-y-4">
       <div className="space-y-2">
-        <p className="text-sm font-semibold uppercase tracking-wide text-indigo-600">
+        <p className="text-sm font-semibold uppercase tracking-wide text-indigo-600 dark:text-indigo-400">
           Step {stepIndex + 1} of {SETUP_STEPS.length}
         </p>
         <div className="flex flex-wrap gap-2">
@@ -236,8 +236,8 @@ export function SetupWizard() {
                 i === stepIndex
                   ? 'bg-indigo-600 text-white'
                   : stepDone[i]
-                    ? 'bg-green-100 text-green-800'
-                    : 'bg-slate-100 text-slate-500'
+                    ? 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200'
+                    : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
               }`}
             >
               {stepDone[i] && i !== stepIndex ? '✓ ' : ''}
@@ -245,7 +245,7 @@ export function SetupWizard() {
             </Link>
           ))}
         </div>
-        <h1 className="text-xl font-bold text-slate-900">{step.title}</h1>
+        <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">{step.title}</h1>
       </div>
 
       <ErrorNote message={actionError} />
@@ -263,7 +263,7 @@ export function SetupWizard() {
           )}
         </div>
         <div className="flex items-center gap-4">
-          <Link to="/" className="text-sm text-slate-500 hover:underline">
+          <Link to="/" className="text-sm text-slate-500 dark:text-slate-400 hover:underline">
             Exit setup
           </Link>
           {isLast ? (

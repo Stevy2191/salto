@@ -47,8 +47,8 @@ function GuidedSetup({ overview, onLoadExample }: { overview: Overview; onLoadEx
   return (
     <div className="space-y-4">
       <Card>
-        <h2 className="text-lg font-bold text-slate-900">Welcome to Salto 👋</h2>
-        <p className="mt-1 text-sm text-slate-600">
+        <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">Welcome to Salto 👋</h2>
+        <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
           The setup guide walks you through the four steps below — or load a fictional example
           gym to explore first; you can remove it again with one click.
         </p>
@@ -69,20 +69,20 @@ function GuidedSetup({ overview, onLoadExample }: { overview: Overview; onLoadEx
           <li key={step.slug}>
             <Link
               to={`/guide/${step.slug}`}
-              className={`flex items-center gap-3 rounded-xl bg-white p-4 ring-1 transition-shadow hover:shadow ${
-                index === nextIndex ? 'ring-2 ring-indigo-500' : 'ring-slate-200'
+              className={`flex items-center gap-3 rounded-xl bg-white dark:bg-slate-800 p-4 ring-1 transition-shadow hover:shadow ${
+                index === nextIndex ? 'ring-2 ring-indigo-500' : 'ring-slate-200 dark:ring-slate-700'
               }`}
             >
               <span
                 className={`flex size-8 shrink-0 items-center justify-center rounded-full text-sm font-bold ${
-                  done[index] ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'
+                  done[index] ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-200' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
                 }`}
               >
                 {done[index] ? '✓' : index + 1}
               </span>
               <span>
-                <span className="block font-medium text-slate-900">{step.title}</span>
-                <span className="block text-sm text-slate-500">{step.detail}</span>
+                <span className="block font-medium text-slate-900 dark:text-slate-100">{step.title}</span>
+                <span className="block text-sm text-slate-500 dark:text-slate-400">{step.detail}</span>
               </span>
             </Link>
           </li>
@@ -152,8 +152,8 @@ export function Dashboard() {
       <PageHeader title="Your sessions" />
       <ErrorNote message={error ?? actionError} />
       {data.exampleLoaded && (
-        <div className="flex flex-wrap items-center gap-3 rounded-xl bg-amber-50 p-4 ring-1 ring-amber-200">
-          <p className="flex-1 text-sm text-amber-800">
+        <div className="flex flex-wrap items-center gap-3 rounded-xl bg-amber-50 dark:bg-amber-950 p-4 ring-1 ring-amber-200 dark:ring-amber-800">
+          <p className="flex-1 text-sm text-amber-800 dark:text-amber-200">
             You're exploring the fictional example gym. Remove it whenever you're ready to enter
             your own gym.
           </p>
@@ -166,21 +166,21 @@ export function Dashboard() {
       {!setupIncomplete && (
         <Card>
           {data.sessions.length === 0 && <EmptyNote>No sessions yet.</EmptyNote>}
-          <ul className="divide-y divide-slate-100">
+          <ul className="divide-y divide-slate-100 dark:divide-slate-700">
             {data.sessions.map((session) => (
               <li key={session.id}>
                 <Link
                   to={`/sessions/${session.id}/schedule`}
-                  className="flex min-h-14 flex-wrap items-center gap-2 py-3 hover:bg-slate-50"
+                  className="flex min-h-14 flex-wrap items-center gap-2 py-3 hover:bg-slate-50 dark:hover:bg-slate-700"
                 >
                   <div className="flex-1">
-                    <span className="font-medium text-slate-900">{sessionLabel(session)}</span>
-                    <p className="text-sm text-slate-500">
+                    <span className="font-medium text-slate-900 dark:text-slate-100">{sessionLabel(session)}</span>
+                    <p className="text-sm text-slate-500 dark:text-slate-400">
                       {formatDateLong(session.date)} · {session.startTime}–{session.endTime} ·{' '}
                       {session.classes.length} class{session.classes.length === 1 ? '' : 'es'}
                     </p>
                   </div>
-                  <span className="text-sm font-medium text-indigo-600">Open schedule →</span>
+                  <span className="text-sm font-medium text-indigo-600 dark:text-indigo-400">Open schedule →</span>
                 </Link>
               </li>
             ))}

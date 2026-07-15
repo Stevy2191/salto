@@ -262,6 +262,11 @@ simple and single-gym:
   color-coded by event, dense but not cramped.
 - Coaches use this poolside-style — chalky hands, phone or a printout.
   Big touch targets, works on a phone screen, prints cleanly.
+- **Light and dark mode**, switched from a button in the header (sun = light,
+  half moon = dark) and remembered per browser; defaults to the OS setting.
+  Gyms are lit anywhere from bright daylight to a dim evening office. The
+  print view stays black-on-white whatever the screen is doing, and
+  user-chosen event colors never change — they still encode the event.
 - Terminology should match gym vocabulary: "rotation," "event," "station," "class,"
   "session" — never "resource allocation" or "task."
 

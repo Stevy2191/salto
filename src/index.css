@@ -1,5 +1,21 @@
 @import "tailwindcss";
 
+/*
+ * Dark mode is a deliberate choice (button in the header), not just an OS
+ * setting, so `dark:` keys off a class on <html> rather than the media
+ * query. Scoping the variant to `@media screen` means every dark: utility
+ * silently drops out when printing — the print view is meant to be
+ * black-and-white friendly and read across a gym, so it stays light no
+ * matter what the screen is doing.
+ */
+@custom-variant dark {
+  @media screen {
+    &:where(.dark, .dark *) {
+      @slot;
+    }
+  }
+}
+
 @media print {
   /* Event colors must survive printing. */
   * {

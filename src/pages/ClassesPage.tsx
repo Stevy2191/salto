@@ -79,7 +79,7 @@ function RequiredEventsEditor({
             }}
             aria-label="duration in minutes"
           />
-          <span className="text-sm text-slate-500">min</span>
+          <span className="text-sm text-slate-500 dark:text-slate-400">min</span>
           <Button
             type="button"
             variant="danger"
@@ -99,7 +99,7 @@ function RequiredEventsEditor({
         </Button>
       )}
       {events.length === 0 && (
-        <p className="text-sm text-slate-400">Create events first, then set what this class needs.</p>
+        <p className="text-sm text-slate-400 dark:text-slate-500">Create events first, then set what this class needs.</p>
       )}
     </div>
   )
@@ -124,10 +124,10 @@ function FitSummary({
     classId === null ? [] : sessions.filter((s) => s.classes.includes(classId))
 
   return (
-    <div className="mt-2 space-y-1 rounded-lg bg-slate-50 p-2 text-sm">
-      <p className="font-medium text-slate-700">Total required: {total} min</p>
+    <div className="mt-2 space-y-1 rounded-lg bg-slate-50 dark:bg-slate-700 p-2 text-sm">
+      <p className="font-medium text-slate-700 dark:text-slate-200">Total required: {total} min</p>
       {attending.length === 0 ? (
-        <p className="text-slate-500">
+        <p className="text-slate-500 dark:text-slate-400">
           {classId === null
             ? 'Save the class and add it to a session to check the time fits.'
             : 'Not in any session yet — add it to one to check the time fits.'}
@@ -142,7 +142,7 @@ function FitSummary({
           return (
             <p
               key={session.id}
-              className={spare < 0 || misfits.length > 0 ? 'font-medium text-red-600' : 'text-emerald-700'}
+              className={spare < 0 || misfits.length > 0 ? 'font-medium text-red-600 dark:text-red-400' : 'text-emerald-700 dark:text-emerald-300'}
             >
               {sessionLabel(session)} ({availableMin} min):{' '}
               {spare < 0 ? `⚠ over by ${-spare} min` : `fits with ${spare} min spare`}
@@ -300,7 +300,7 @@ export function ClassesPage() {
       <PageHeader title="Classes" />
       <ErrorNote message={classesLoad.error ?? eventsLoad.error ?? coachesLoad.error ?? actionError} />
       <Card>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
           Add class
         </h2>
         <ClassForm
@@ -316,7 +316,7 @@ export function ClassesPage() {
       </Card>
       <Card>
         {classes.length === 0 && <EmptyNote>No classes yet.</EmptyNote>}
-        <ul className="divide-y divide-slate-100">
+        <ul className="divide-y divide-slate-100 dark:divide-slate-700">
           {classes.map((cls) =>
             editingId === cls.id ? (
               <li key={cls.id} className="py-3">
@@ -337,16 +337,16 @@ export function ClassesPage() {
             ) : (
               <li key={cls.id} className="flex flex-wrap items-center gap-2 py-3">
                 <div className="flex-1">
-                  <span className="font-medium text-slate-900">{cls.name}</span>
-                  <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-600">
+                  <span className="font-medium text-slate-900 dark:text-slate-100">{cls.name}</span>
+                  <span className="ml-2 rounded bg-slate-100 dark:bg-slate-700 px-1.5 py-0.5 text-xs font-medium text-slate-600 dark:text-slate-300">
                     priority {cls.priority}
                   </span>
                   {cls.isSample && (
-                    <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700">
+                    <span className="ml-2 rounded bg-amber-100 dark:bg-amber-900 px-1.5 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-200">
                       sample
                     </span>
                   )}
-                  <p className="text-sm text-slate-500">{describe(cls)}</p>
+                  <p className="text-sm text-slate-500 dark:text-slate-400">{describe(cls)}</p>
                 </div>
                 <Button variant="secondary" onClick={() => setEditingId(cls.id)}>
                   Edit

@@ -34,6 +34,7 @@ All three phases below are implemented — **v1 is feature-complete**.
 - Print view: black-and-white-friendly block layout in the event colors, plus per-class "where do I go next" strips for handing to coaches
 - Colored Excel export matching gyms' hand-made sheets
 - Copy a session onto a new date — same classes, schedule, and duration — which is how a weekly practice repeats
+- Light and dark mode, toggled from the header (sun = light, half moon = dark) and remembered per browser; defaults to your OS setting. The print view stays black-on-white whatever the screen is doing.
 
 ## How scheduling works
 

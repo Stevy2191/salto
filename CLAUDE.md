@@ -27,6 +27,7 @@ Salto — rotation scheduling for gymnastics gyms. Auto-generates conflict-free 
 - Nothing gym-specific is hardcoded: events, classes, coaches, and constraints are all user-defined data. Never bake in a fixed list of events or assumptions about session structure.
 - Use gym vocabulary in code and UI: "rotation," "event," "station," "class," "session" — never "resource allocation" or "task." A training group is a **class** (renamed from "group" after user testing); only SQLite storage still uses the legacy `groups`/`group_id` names, translated in the server's row mappers. Sessions are tied to a specific `date` ("YYYY-MM-DD"), not a weekday — repeating a practice means copying it onto a new date.
 - Events carry a `color` (curated palette + custom, palette and contrast helpers in `shared/colors.ts`). Color always encodes the *event* wherever schedules are rendered — grid, Excel export (`GET /api/sessions/:id/export`, generated server-side with exceljs), and the future print view.
+- **Dark mode** is a user choice (header toggle, `src/lib/theme.ts`), stored in localStorage and defaulting to the OS setting; it applies via a `dark` class on `<html>`, set pre-paint by an inline script in `index.html` (keep that script in sync with `theme.ts`). The `dark` variant is defined in `src/index.css` and deliberately scoped to `@media screen`, so **every `dark:` utility drops out when printing** — the print view stays black-on-white paper and needs no print overrides. User-chosen event colors are never themed.
 
 ## Architecture
 

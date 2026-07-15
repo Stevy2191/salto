@@ -33,10 +33,10 @@ export function SetupPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-100 p-4">
-      <form onSubmit={onSubmit} className="w-full max-w-sm space-y-4 rounded-xl bg-white p-6 shadow">
-        <h1 className="text-2xl font-bold text-slate-900">Welcome to Salto</h1>
-        <p className="text-sm text-slate-600">
+    <main className="flex min-h-screen items-center justify-center bg-slate-100 dark:bg-slate-700 p-4">
+      <form onSubmit={onSubmit} className="w-full max-w-sm space-y-4 rounded-xl bg-white dark:bg-slate-800 p-6 shadow">
+        <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">Welcome to Salto</h1>
+        <p className="text-sm text-slate-600 dark:text-slate-300">
           Create the admin account for your gym. You'll use it to sign in from now on.
         </p>
         <ErrorNote message={error} />

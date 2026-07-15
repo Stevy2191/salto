@@ -38,8 +38,8 @@ function ColorPicker({
           onClick={() => onChange(color)}
           className={`size-9 rounded-full transition-shadow ${
             selected === color
-              ? 'ring-2 ring-slate-900 ring-offset-2'
-              : 'ring-1 ring-black/10 hover:ring-slate-400'
+              ? 'ring-2 ring-slate-900 dark:ring-slate-100 ring-offset-2'
+              : 'ring-1 ring-black/10 hover:ring-slate-400 dark:hover:ring-slate-500'
           }`}
           style={{ backgroundColor: color }}
         />
@@ -47,7 +47,7 @@ function ColorPicker({
       <label
         title="Custom color"
         className={`relative size-9 cursor-pointer overflow-hidden rounded-full ${
-          isCustom ? 'ring-2 ring-slate-900 ring-offset-2' : 'ring-1 ring-black/10'
+          isCustom ? 'ring-2 ring-slate-900 dark:ring-slate-100 ring-offset-2' : 'ring-1 ring-black/10'
         }`}
         style={
           isCustom
@@ -63,7 +63,7 @@ function ColorPicker({
           aria-label="custom color"
         />
       </label>
-      {value === null && <span className="text-sm text-slate-400">auto — next free color</span>}
+      {value === null && <span className="text-sm text-slate-400 dark:text-slate-500">auto — next free color</span>}
     </div>
   )
 }
@@ -126,7 +126,7 @@ export function EventForm({
             placeholder="no limit"
           />
         </Field>
-        <label className="flex min-h-11 items-center gap-2 py-2 text-sm font-medium text-slate-700">
+        <label className="flex min-h-11 items-center gap-2 py-2 text-sm font-medium text-slate-700 dark:text-slate-200">
           <input
             type="checkbox"
             checked={active}
@@ -173,7 +173,7 @@ export function EventsPage() {
       <PageHeader title="Events" />
       <ErrorNote message={error ?? actionError} />
       <Card>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
           Add event
         </h2>
         <EventForm
@@ -186,7 +186,7 @@ export function EventsPage() {
       </Card>
       <Card>
         {events.length === 0 && <EmptyNote>No events yet — add your first one above.</EmptyNote>}
-        <ul className="divide-y divide-slate-100">
+        <ul className="divide-y divide-slate-100 dark:divide-slate-700">
           {events.map((event) =>
             editingId === event.id ? (
               <li key={event.id} className="py-3">
@@ -211,13 +211,13 @@ export function EventsPage() {
                     style={{ backgroundColor: event.color }}
                     aria-label={`color ${event.color}`}
                   />
-                  <span className="font-medium text-slate-900">{event.name}</span>
+                  <span className="font-medium text-slate-900 dark:text-slate-100">{event.name}</span>
                   {event.isSample && (
-                    <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700">
+                    <span className="ml-2 rounded bg-amber-100 dark:bg-amber-900 px-1.5 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-200">
                       sample
                     </span>
                   )}
-                  <p className="text-sm text-slate-500">
+                  <p className="text-sm text-slate-500 dark:text-slate-400">
                     {event.capacity === null
                       ? 'no class limit'
                       : event.capacity === 1

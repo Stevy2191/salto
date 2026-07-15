@@ -45,11 +45,11 @@ export function CopySessionDialog({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-sm space-y-3 rounded-xl bg-white p-4 shadow-lg"
+        className="w-full max-w-sm space-y-3 rounded-xl bg-white dark:bg-slate-800 p-4 shadow-lg"
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 className="font-semibold text-slate-900">Copy "{sessionLabel(session)}"</h2>
-        <p className="text-sm text-slate-600">
+        <h2 className="font-semibold text-slate-900 dark:text-slate-100">Copy "{sessionLabel(session)}"</h2>
+        <p className="text-sm text-slate-600 dark:text-slate-300">
           Same classes, rotation length, duration, and schedule — pick the date it repeats on.
           Copied assignments arrive unlocked.
         </p>

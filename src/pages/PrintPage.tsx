@@ -76,13 +76,20 @@ export function PrintPage() {
         <Button onClick={() => window.print()}>Print this page</Button>
         <Link
           to={`/sessions/${sessionId}/schedule`}
-          className="text-sm font-medium text-indigo-600 hover:underline"
+          className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400"
         >
           ← Back to the editor
         </Link>
       </div>
 
-      <h1 className="text-2xl font-black text-black">{sessionLabel(session)}</h1>
+      {/*
+        A preview of a printed sheet, so it stays black-on-white even in dark
+        mode: printing it dark would burn ink and wreck the black-and-white
+        legibility this view exists for. On screen it reads as paper on a
+        desk; printing drops the sheet chrome.
+      */}
+      <div className="bg-white p-6 text-black shadow-sm dark:shadow-none print:p-0 print:shadow-none">
+        <h1 className="text-2xl font-black text-black">{sessionLabel(session)}</h1>
       <p className="text-sm font-medium text-slate-700">
         {formatDateLong(session.date)} · {session.startTime}–{session.endTime} ·{' '}
         {session.rotationLength}-minute rotations
@@ -168,9 +175,10 @@ export function PrintPage() {
                       .join('  →  ')}
               </p>
             </div>
-          ))}
-        </div>
-      </section>
+            ))}
+          </div>
+        </section>
+      </div>
     </div>
   )
 }
