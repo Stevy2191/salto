@@ -23,7 +23,7 @@ import { mulberry32, shuffled } from './rng.ts'
 import type {
   SolverBlock,
   SolverClass,
-  SolverCoach,
+
   SolverEvent,
   SolverInput,
   SolverPlacement,

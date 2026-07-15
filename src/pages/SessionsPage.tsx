@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import type { GymClass, Session } from '../../shared/types.ts'
-import { slotCount } from '../../shared/slots.ts'
+import { rowCount, SLOT_MINUTES } from '../../shared/slots.ts'
 import { formatDateLong, todayIsoDate } from '../../shared/dates.ts'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api.ts'
 import { useLoad } from '../lib/useLoad.ts'
@@ -24,10 +24,11 @@ export interface SessionFormValues {
   name: string
   /** "YYYY-MM-DD" — the specific day this practice happens. */
   date: string
+  /** The session's master window — the grid's time axis. */
   startTime: string
   endTime: string
-  rotationLength: number
-  classes: number[]
+  /** Only used when creating: each class gets its own full-window column. */
+  classes?: number[]
 }
 
 export function SessionForm({
@@ -94,25 +95,18 @@ export function SessionForm({
             required
           />
         </Field>
-        <Field label="Rotation length (minutes, steps of 5)">
-          <TextInput
-            type="number"
-            min={5}
-            max={240}
-            step={5}
-            value={values.rotationLength}
-            onChange={(e) => set('rotationLength', Number(e.target.value))}
-            required
-          />
-        </Field>
       </div>
-      <FieldGroup label="Classes attending">
-        <ChipPicker
-          options={classes.map((c) => ({ id: c.id, label: c.name }))}
-          selected={values.classes}
-          onChange={(ids) => set('classes', ids)}
-        />
-      </FieldGroup>
+      {/* Only when creating: once a session exists, its classes live in the
+          grid, where they have columns and windows of their own. */}
+      {values.classes !== undefined && (
+        <FieldGroup label="Classes to start with (each gets its own column)">
+          <ChipPicker
+            options={classes.map((c) => ({ id: c.id, label: c.name }))}
+            selected={values.classes}
+            onChange={(ids) => set('classes', ids)}
+          />
+        </FieldGroup>
+      )}
       <div className="flex gap-2">
         <Button type="submit">Save</Button>
         {onCancel && (
@@ -152,7 +146,6 @@ export function SessionsPage() {
     date: todayIsoDate(),
     startTime: '16:00',
     endTime: '18:00',
-    rotationLength: 15,
     classes: [],
   }
 
@@ -201,8 +194,9 @@ export function SessionsPage() {
                   )}
                   <p className="text-sm text-slate-500 dark:text-slate-400">
                     {formatDateLong(session.date)} · {session.startTime}–{session.endTime} ·{' '}
-                    {slotCount(session)} rotations of {session.rotationLength} min ·{' '}
-                    {session.classes.length} class{session.classes.length === 1 ? '' : 'es'}
+                    {rowCount(session)} rows of {SLOT_MINUTES} min · {session.columnCount} column
+                    {session.columnCount === 1 ? '' : 's'} · {session.classCount} class
+                    {session.classCount === 1 ? '' : 'es'}
                   </p>
                 </div>
                 <Link

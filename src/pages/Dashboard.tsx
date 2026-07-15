@@ -177,7 +177,7 @@ export function Dashboard() {
                     <span className="font-medium text-slate-900 dark:text-slate-100">{sessionLabel(session)}</span>
                     <p className="text-sm text-slate-500 dark:text-slate-400">
                       {formatDateLong(session.date)} · {session.startTime}–{session.endTime} ·{' '}
-                      {session.classes.length} class{session.classes.length === 1 ? '' : 'es'}
+                      {session.classCount} class{session.classCount === 1 ? '' : 'es'}
                     </p>
                   </div>
                   <span className="text-sm font-medium text-indigo-600 dark:text-indigo-400">Open schedule →</span>

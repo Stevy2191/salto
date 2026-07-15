@@ -20,7 +20,7 @@ const T = (hhmm: string) => {
 
 beforeEach(async () => {
   ;({ app, cookie } = await appWithAdmin())
-  const post = async (path: string, body: unknown) =>
+  const post = async (path: string, body: object) =>
     (await request(app).post(path).set('Cookie', cookie).send(body)).body
 
   vaultId = (await post('/api/events', { name: 'Vault' })).event.id

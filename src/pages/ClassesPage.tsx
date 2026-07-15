@@ -1,10 +1,9 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
-import type { Coach, GymClass, GymEvent, RequiredEvent, Session } from '../../shared/types.ts'
-import { slotCount } from '../../shared/slots.ts'
+import type { ClassWindow, Coach, GymClass, GymEvent, RequiredEvent } from '../../shared/types.ts'
+import { SLOT_MINUTES, formatRange } from '../../shared/slots.ts'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api.ts'
 import { useLoad } from '../lib/useLoad.ts'
-import { sessionLabel } from '../lib/sessions.ts'
 import {
   Button,
   Card,
@@ -107,49 +106,54 @@ function RequiredEventsEditor({
 
 /**
  * Live feedback while editing requirements: total time asked for, and — for
- * every session this class attends — whether it fits before generating.
+ * every window this class is placed in — whether it fits. The class's own
+ * window is what matters now, not the length of the session it sits in.
  */
 function FitSummary({
   drafts,
-  sessions,
+  windows,
   classId,
 }: {
   drafts: RequiredEventDraft[]
-  sessions: Session[]
+  windows: ClassWindow[]
   classId: number | null
 }) {
   if (drafts.length === 0) return null
   const total = drafts.reduce((sum, d) => sum + (Number(d.duration) || 0), 0)
-  const attending =
-    classId === null ? [] : sessions.filter((s) => s.classes.includes(classId))
+  const offAxis = drafts.filter(
+    (d) => Number(d.duration) > 0 && Number(d.duration) % SLOT_MINUTES !== 0,
+  )
 
   return (
-    <div className="mt-2 space-y-1 rounded-lg bg-slate-50 dark:bg-slate-700 p-2 text-sm">
+    <div className="mt-2 space-y-1 rounded-lg bg-slate-50 p-2 text-sm dark:bg-slate-700">
       <p className="font-medium text-slate-700 dark:text-slate-200">Total required: {total} min</p>
-      {attending.length === 0 ? (
+      {offAxis.length > 0 && (
+        <p className="font-medium text-red-600 dark:text-red-400">
+          ⚠ {offAxis.map((d) => `${d.duration} min`).join(', ')} — durations must be a multiple of{' '}
+          {SLOT_MINUTES} minutes
+        </p>
+      )}
+      {classId === null ? (
         <p className="text-slate-500 dark:text-slate-400">
-          {classId === null
-            ? 'Save the class and add it to a session to check the time fits.'
-            : 'Not in any session yet — add it to one to check the time fits.'}
+          Save the class, then place it in a session to check the time fits.
+        </p>
+      ) : windows.length === 0 ? (
+        <p className="text-slate-500 dark:text-slate-400">
+          Not placed in any session yet — add it to a column to check the time fits.
         </p>
       ) : (
-        attending.map((session) => {
-          const availableMin = slotCount(session) * session.rotationLength
-          const spare = availableMin - total
-          const misfits = drafts.filter(
-            (d) => Number(d.duration) > 0 && Number(d.duration) % session.rotationLength !== 0,
-          )
+        windows.map((w) => {
+          const available = w.endMin - w.startMin
+          const spare = available - total
           return (
             <p
-              key={session.id}
-              className={spare < 0 || misfits.length > 0 ? 'font-medium text-red-600 dark:text-red-400' : 'text-emerald-700 dark:text-emerald-300'}
+              key={`${w.sessionId}:${w.startMin}`}
+              className={
+                spare < 0 ? 'font-medium text-red-600 dark:text-red-400' : 'text-emerald-700 dark:text-emerald-300'
+              }
             >
-              {sessionLabel(session)} ({availableMin} min):{' '}
+              {w.sessionName || w.date} {formatRange(w.startMin, w.endMin)} ({available} min):{' '}
               {spare < 0 ? `⚠ over by ${-spare} min` : `fits with ${spare} min spare`}
-              {misfits.length > 0 &&
-                ` · ⚠ ${misfits
-                  .map((d) => `${d.duration} min`)
-                  .join(', ')} not a multiple of the ${session.rotationLength}-min rotation`}
             </p>
           )
         })
@@ -163,7 +167,7 @@ export function ClassForm({
   classId = null,
   events,
   coaches,
-  sessions = [],
+  windows = [],
   onSave,
   onCancel,
 }: {
@@ -172,8 +176,8 @@ export function ClassForm({
   classId?: number | null
   events: GymEvent[]
   coaches: Coach[]
-  /** All sessions, for the fit summary while editing requirements. */
-  sessions?: Session[]
+  /** Where this class is placed, for the fit summary. */
+  windows?: ClassWindow[]
   onSave: (values: ClassFormValues) => Promise<void>
   onCancel?: () => void
 }) {
@@ -232,7 +236,7 @@ export function ClassForm({
       </div>
       <FieldGroup label="Required events per session">
         <RequiredEventsEditor value={requiredEvents} events={events} onChange={setRequiredEvents} />
-        <FitSummary drafts={requiredEvents} sessions={sessions} classId={classId} />
+        <FitSummary drafts={requiredEvents} windows={windows} classId={classId} />
       </FieldGroup>
       <FieldGroup label="Assigned coaches">
         <ChipPicker
@@ -257,14 +261,13 @@ export function ClassesPage() {
   const classesLoad = useLoad(() => apiGet<{ classes: GymClass[] }>('/api/classes'))
   const eventsLoad = useLoad(() => apiGet<{ events: GymEvent[] }>('/api/events'))
   const coachesLoad = useLoad(() => apiGet<{ coaches: Coach[] }>('/api/coaches'))
-  const sessionsLoad = useLoad(() => apiGet<{ sessions: Session[] }>('/api/sessions'))
   const [editingId, setEditingId] = useState<number | null>(null)
+  const [windows, setWindows] = useState<ClassWindow[]>([])
   const [actionError, setActionError] = useState<string | null>(null)
 
   const classes = classesLoad.data?.classes ?? []
   const events = eventsLoad.data?.events ?? []
   const coaches = coachesLoad.data?.coaches ?? []
-  const sessions = sessionsLoad.data?.sessions ?? []
 
   async function remove(cls: GymClass) {
     if (!confirm(`Delete "${cls.name}"? Its schedule cells will be removed.`)) return
@@ -307,7 +310,6 @@ export function ClassesPage() {
           initial={{ name: '', priority: 0, requiredEvents: [], assignedCoaches: [] }}
           events={events}
           coaches={coaches}
-          sessions={sessions}
           onSave={async (values) => {
             await apiPost('/api/classes', values)
             await classesLoad.reload()
@@ -325,7 +327,7 @@ export function ClassesPage() {
                   classId={cls.id}
                   events={events}
                   coaches={coaches}
-                  sessions={sessions}
+                  windows={windows}
                   onCancel={() => setEditingId(null)}
                   onSave={async (values) => {
                     await apiPut(`/api/classes/${cls.id}`, values)
@@ -348,7 +350,16 @@ export function ClassesPage() {
                   )}
                   <p className="text-sm text-slate-500 dark:text-slate-400">{describe(cls)}</p>
                 </div>
-                <Button variant="secondary" onClick={() => setEditingId(cls.id)}>
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setEditingId(cls.id)
+                    setWindows([])
+                    void apiGet<{ windows: ClassWindow[] }>(`/api/classes/${cls.id}/windows`)
+                      .then((r) => setWindows(r.windows))
+                      .catch(() => setWindows([]))
+                  }}
+                >
                   Edit
                 </Button>
                 <Button variant="danger" onClick={() => void remove(cls)}>

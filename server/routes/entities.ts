@@ -1,6 +1,13 @@
 import { Router } from 'express'
 import type { DatabaseSync } from 'node:sqlite'
-import type { Coach, GymClass, GymEvent, RequiredEvent, Session } from '../../shared/types.ts'
+import type {
+  ClassWindow,
+  Coach,
+  GymClass,
+  GymEvent,
+  RequiredEvent,
+  Session,
+} from '../../shared/types.ts'
 import { formatTime, isSnapped, parseTime } from '../../shared/slots.ts'
 import { isHexColor, nextPaletteColor } from '../../shared/colors.ts'
 import { isIsoDate } from '../../shared/dates.ts'
@@ -58,7 +65,15 @@ interface SessionRow {
   absent_coaches: string
   unavailable_events: string
   is_sample: number
+  /** Derived, not stored: how many classes the grid actually holds. */
+  class_count: number
 }
+
+// Attendance lives in the grid now, so a session's class count is derived
+// from its placements rather than kept as a second source of truth.
+const SESSION_SELECT = `SELECT s.*, (
+  SELECT COUNT(DISTINCT class_id) FROM placements WHERE session_id = s.id
+) AS class_count FROM sessions s`
 
 const toEvent = (r: EventRow): GymEvent => ({
   id: r.id,
@@ -93,6 +108,7 @@ const toSession = (r: SessionRow): Session => ({
   startTime: r.start_time,
   endTime: r.end_time,
   columnCount: r.column_count,
+  classCount: r.class_count,
   absentCoaches: JSON.parse(r.absent_coaches) as number[],
   unavailableEvents: JSON.parse(r.unavailable_events) as number[],
   isSample: r.is_sample === 1,
@@ -358,6 +374,38 @@ export function entityRoutes(db: DatabaseSync): Router {
     res.json({ class: toClass(row) })
   })
 
+  // The windows a class is placed in, across every session — what the class
+  // form needs to say whether its required events fit.
+  router.get('/classes/:id/windows', (req, res) => {
+    const id = idParam(req.params.id)
+    requireRow(db.prepare('SELECT id FROM groups WHERE id = ?').get(id), 'class')
+    const rows = db
+      .prepare(
+        `SELECT p.session_id, s.name, s.date, p.start_min, p.end_min
+         FROM placements p JOIN sessions s ON s.id = p.session_id
+         WHERE p.class_id = ?
+         ORDER BY s.date, p.start_min`,
+      )
+      .all(id) as {
+      session_id: number
+      name: string
+      date: string
+      start_min: number
+      end_min: number
+    }[]
+    res.json({
+      windows: rows.map(
+        (r): ClassWindow => ({
+          sessionId: r.session_id,
+          sessionName: r.name,
+          date: r.date,
+          startMin: r.start_min,
+          endMin: r.end_min,
+        }),
+      ),
+    })
+  })
+
   router.delete('/classes/:id', (req, res) => {
     const id = idParam(req.params.id)
     requireRow(db.prepare('SELECT id FROM groups WHERE id = ?').get(id), 'class')
@@ -369,13 +417,13 @@ export function entityRoutes(db: DatabaseSync): Router {
 
   // --- Sessions ---
   router.get('/sessions', (_req, res) => {
-    const rows = db.prepare('SELECT * FROM sessions ORDER BY date, start_time').all() as unknown as SessionRow[]
+    const rows = db.prepare(`${SESSION_SELECT} ORDER BY s.date, s.start_time`).all() as unknown as SessionRow[]
     res.json({ sessions: rows.map(toSession) })
   })
 
   router.get('/sessions/:id', (req, res) => {
     const id = idParam(req.params.id)
-    const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as unknown as SessionRow | undefined
+    const row = db.prepare(`${SESSION_SELECT} WHERE s.id = ?`).get(id) as unknown as SessionRow | undefined
     requireRow(row, 'session')
     res.json({ session: toSession(row!) })
   })
@@ -402,7 +450,7 @@ export function entityRoutes(db: DatabaseSync): Router {
       })
       return id
     })
-    const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId) as unknown as SessionRow
+    const row = db.prepare(`${SESSION_SELECT} WHERE s.id = ?`).get(sessionId) as unknown as SessionRow
     res.status(201).json({ session: toSession(row) })
   })
 
@@ -428,7 +476,7 @@ export function entityRoutes(db: DatabaseSync): Router {
     db.prepare(
       'UPDATE sessions SET name = ?, date = ?, start_time = ?, end_time = ? WHERE id = ?',
     ).run(s.name, s.date, s.startTime, s.endTime, id)
-    const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as unknown as SessionRow
+    const row = db.prepare(`${SESSION_SELECT} WHERE s.id = ?`).get(id) as unknown as SessionRow
     res.json({ session: toSession(row) })
   })
 
@@ -445,7 +493,7 @@ export function entityRoutes(db: DatabaseSync): Router {
       throw new ApiError(400, 'a column still holds classes — move or remove them first')
     }
     db.prepare('UPDATE sessions SET column_count = ? WHERE id = ?').run(columnCount, id)
-    const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as unknown as SessionRow
+    const row = db.prepare(`${SESSION_SELECT} WHERE s.id = ?`).get(id) as unknown as SessionRow
     res.json({ session: toSession(row) })
   })
 
@@ -469,7 +517,7 @@ export function entityRoutes(db: DatabaseSync): Router {
       JSON.stringify(unavailableEvents),
       id,
     )
-    const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as unknown as SessionRow
+    const row = db.prepare(`${SESSION_SELECT} WHERE s.id = ?`).get(id) as unknown as SessionRow
     res.json({ session: toSession(row) })
   })
 
@@ -479,7 +527,7 @@ export function entityRoutes(db: DatabaseSync): Router {
   // grid lands identical, just later or earlier in the day.
   router.post('/sessions/:id/copy', (req, res) => {
     const id = idParam(req.params.id)
-    const source = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as unknown as
+    const source = db.prepare(`${SESSION_SELECT} WHERE s.id = ?`).get(id) as unknown as
       | SessionRow
       | undefined
     requireRow(source, 'session')
@@ -556,7 +604,7 @@ export function entityRoutes(db: DatabaseSync): Router {
       }
       return sessionId
     })
-    const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(newId) as unknown as SessionRow
+    const row = db.prepare(`${SESSION_SELECT} WHERE s.id = ?`).get(newId) as unknown as SessionRow
     res.status(201).json({ session: toSession(row) })
   })
 

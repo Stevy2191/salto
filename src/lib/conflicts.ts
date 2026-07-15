@@ -36,8 +36,8 @@ function add<K, V>(map: Map<K, Set<V>>, key: K, value: V) {
   else map.set(key, new Set([value]))
 }
 
-const freeze = <K, V>(map: Map<K, Set<V>>) =>
-  new Map([...map].map(([k, set]) => [k, [...set]] as const))
+const freeze = <K, V>(map: Map<K, Set<V>>): Map<K, V[]> =>
+  new Map([...map].map(([k, set]) => [k, [...set]]))
 
 export function findConflicts(schedule: Schedule, events: GymEvent[]): Conflicts {
   const blockReasons = new Map<number, Set<BlockConflict>>()

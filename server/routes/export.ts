@@ -161,20 +161,28 @@ export function exportRoutes(db: DatabaseSync): Router {
       cell.alignment = { horizontal: 'right', vertical: 'top' }
     }
 
-    // Each placement: a class header band, then its painted event blocks.
+    // Each placement: a class header, then its painted event blocks.
     for (const p of placements) {
       const column = p.columnIndex + 2
       const headerAt = rowFor(p.startMin)
-      const headerCell = sheet.getRow(headerAt).getCell(column)
-      headerCell.value = `${classNames.get(p.classId) ?? `class #${p.classId}`}  ${formatRange(p.startMin, p.endMin)}`
-      headerCell.fill = solidFill(CLASS_HEADER_FILL)
-      headerCell.font = { bold: true, size: 9 }
-      headerCell.alignment = { horizontal: 'left', vertical: 'middle' }
-      headerCell.border = { top: medium, left: medium, right: medium, bottom: thin }
+      const label = `${classNames.get(p.classId) ?? `class #${p.classId}`}  ${formatRange(p.startMin, p.endMin)}`
+      // The class names itself at the top of its window. When a block already
+      // starts there, the name rides along inside that block instead of
+      // taking a row of its own — spending 5 minutes on a label would push
+      // the block down and misreport its time.
+      const startsOnBlock = p.blocks.some((b) => rowFor(b.startMin) === headerAt)
+      if (!startsOnBlock) {
+        const headerCell = sheet.getRow(headerAt).getCell(column)
+        headerCell.value = label
+        headerCell.fill = solidFill(CLASS_HEADER_FILL)
+        headerCell.font = { bold: true, size: 9 }
+        headerCell.alignment = { horizontal: 'left', vertical: 'middle' }
+        headerCell.border = { top: medium, left: medium, right: medium, bottom: thin }
+      }
 
       for (const b of p.blocks) {
         const color = eventColor(b.eventId)
-        const first = Math.max(rowFor(b.startMin), headerAt + 1)
+        const first = rowFor(b.startMin)
         const last = rowFor(b.endMin) - 1
         if (last < first) continue
         // Merge the block into one cell so the event name has room to show
@@ -186,7 +194,12 @@ export function exportRoutes(db: DatabaseSync): Router {
         if (last > first) sheet.mergeCells(first, column, last, column)
         const cell = sheet.getRow(first).getCell(column)
         const coach = b.coachId === null ? undefined : coachNames.get(b.coachId)
-        cell.value = coach ? `${eventName(b.eventId)}\n${coach}` : eventName(b.eventId)
+        const lines = [
+          first === headerAt ? label : null,
+          eventName(b.eventId),
+          coach ?? null,
+        ].filter(Boolean)
+        cell.value = lines.join('\n')
         cell.font = { color: { argb: argb(textColorFor(color)) }, size: 9 }
         cell.alignment = { horizontal: 'left', vertical: 'top', wrapText: true }
         cell.fill = solidFill(color)

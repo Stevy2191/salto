@@ -58,6 +58,8 @@ export interface Session {
   endTime: string
   /** How many columns (lanes) the grid has. */
   columnCount: number
+  /** Read-only: how many distinct classes are placed in this session. */
+  classCount: number
   /** Coaches marked absent for this session only (day-of change). */
   absentCoaches: number[]
   /** Events marked out for this session only (day-of change). */
@@ -99,6 +101,15 @@ export interface Placement {
 /** Everything the grid needs to render and save a session's schedule. */
 export interface Schedule {
   placements: Placement[]
+}
+
+/** Where a class is placed, for showing whether its events fit. */
+export interface ClassWindow {
+  sessionId: number
+  sessionName: string
+  date: string
+  startMin: number
+  endMin: number
 }
 
 /** Whether coaches travel with their class or own an event. */

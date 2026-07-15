@@ -54,7 +54,7 @@ async function downloadSheet(): Promise<{ res: request.Response; sheet: ExcelJS.
 
 beforeEach(async () => {
   ;({ app, cookie } = await appWithAdmin())
-  const post = async (path: string, body: unknown) =>
+  const post = async (path: string, body: object) =>
     (await request(app).post(path).set('Cookie', cookie).send(body)).body
 
   vaultId = (await post('/api/events', { name: 'Vault', color: VAULT_COLOR })).event.id
@@ -99,7 +99,9 @@ beforeEach(async () => {
           columnIndex: 0,
           startMin: T('17:00'),
           endMin: T('18:00'),
-          blocks: [{ eventId: vaultId, coachId: null, startMin: T('17:05'), endMin: T('17:30') }],
+          // Starts exactly at its class's window start — the case where a
+          // header row of its own would shove it down and misreport it.
+          blocks: [{ eventId: vaultId, coachId: null, startMin: T('17:00'), endMin: T('17:30') }],
         },
         {
           classId: silver,
@@ -159,8 +161,24 @@ describe('Excel export', () => {
     // Each class names itself where its window starts, inside the lane.
     expect(String(sheet.getCell(`B${ROW_OF('16:00')}`).value)).toContain('LV 1')
     expect(String(sheet.getCell(`B${ROW_OF('16:00')}`).value)).toContain('16:00–17:00')
-    expect(String(sheet.getCell(`B${ROW_OF('17:00')}`).value)).toContain('LV 2')
     expect(String(sheet.getCell(`C${ROW_OF('16:30')}`).value)).toContain('Xcel Silver')
+  })
+
+  it('never lets the class label push a block off its real time', async () => {
+    const { sheet } = await downloadSheet()
+    // LV 2 starts at 17:00 with Vault painted from 17:00 — the label rides
+    // inside the block rather than stealing a 5-minute row above it, so the
+    // block still starts on 17:00 and runs its full 30 minutes.
+    const head = sheet.getCell(`B${ROW_OF('17:00')}`)
+    expect(String(head.value)).toContain('LV 2')
+    expect(String(head.value)).toContain('Vault')
+    expect(head.fill).toMatchObject({ fgColor: { argb: `FF${VAULT_COLOR.slice(1)}` } })
+    // Filled through 17:25 (the last 5-min row of a 17:00–17:30 block)…
+    expect(sheet.getCell(`B${ROW_OF('17:25')}`).fill).toMatchObject({
+      fgColor: { argb: `FF${VAULT_COLOR.slice(1)}` },
+    })
+    // …and not a row further.
+    expectUnfilled(sheet.getCell(`B${ROW_OF('17:30')}`))
   })
 
   it('writes an event block once, with its color carried down the span', async () => {

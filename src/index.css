@@ -26,6 +26,8 @@
     background: white;
   }
   @page {
-    margin: 12mm;
+    /* A real session runs 16+ classes; portrait never fits them. */
+    size: landscape;
+    margin: 10mm;
   }
 }
