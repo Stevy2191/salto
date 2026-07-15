@@ -114,13 +114,14 @@ export function generateSchedule(input: SolverInput): SolverResult {
 
   const candidateStarts = (block: Block): number[] => {
     const event = eventById.get(block.eventId)!
+    const capacity = event.capacity ?? Infinity
     const use = eventUse.get(block.eventId)!
     const busy = classBusy.get(block.cls.id)!
     const at = classEventAt.get(block.cls.id)!
     const starts: { start: number; score: number }[] = []
     outer: for (let start = 0; start + block.length <= S; start++) {
       for (let t = start; t < start + block.length; t++) {
-        if (use[t]! >= event.capacity || busy[t]! === 1) continue outer
+        if (use[t]! >= capacity || busy[t]! === 1) continue outer
       }
       // Idle heuristic: prefer starts adjacent to the class's existing
       // blocks; a class with nothing placed prefers packing early.
@@ -332,9 +333,9 @@ function feasibilityReasons(input: SolverInput): string[] {
     }
   }
 
-  // Aggregate event demand vs capacity.
+  // Aggregate event demand vs capacity (unlimited events can't overbook).
   for (const event of input.events) {
-    if (!event.active) continue
+    if (!event.active || event.capacity === null) continue
     let demand = 0
     for (const cls of input.classes) {
       demand += requiredSlots.get(`${cls.id}:${event.id}`) ?? 0
@@ -370,7 +371,7 @@ function feasibilityReasons(input: SolverInput): string[] {
     }
     const useKey = `${lock.eventId}:${lock.slotIndex}`
     lockUse.set(useKey, (lockUse.get(useKey) ?? 0) + 1)
-    if (lockUse.get(useKey)! > event.capacity) {
+    if (event.capacity !== null && lockUse.get(useKey)! > event.capacity) {
       reasons.push(
         `${event.name} has more locked classes than its capacity of ${event.capacity} at ${slotLabel(lock.slotIndex)}.`,
       )

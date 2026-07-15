@@ -10,7 +10,8 @@ import type { SolverInput } from './types.ts'
 const arbScenario = fc
   .record({
     eventCount: fc.integer({ min: 2, max: 5 }),
-    capacities: fc.array(fc.integer({ min: 1, max: 2 }), { minLength: 5, maxLength: 5 }),
+    // null = unlimited simultaneous classes.
+    capacities: fc.array(fc.constantFrom<number | null>(1, 2, null), { minLength: 5, maxLength: 5 }),
     classCount: fc.integer({ min: 1, max: 5 }),
     requirements: fc.array(
       fc.array(

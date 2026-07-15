@@ -8,7 +8,8 @@ export type { AdjacencyPenalty }
 export interface SolverEvent {
   id: number
   name: string
-  capacity: number
+  /** null = unlimited simultaneous classes. */
+  capacity: number | null
   active: boolean
 }
 

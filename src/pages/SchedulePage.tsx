@@ -842,7 +842,7 @@ export function SchedulePage() {
                             ⚠ out today
                           </span>
                         )}
-                        {event.capacity > 1 && (
+                        {event.capacity !== null && event.capacity > 1 && (
                           <span className="block text-xs font-normal text-slate-500">
                             fits {event.capacity}
                           </span>

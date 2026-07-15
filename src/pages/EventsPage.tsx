@@ -8,7 +8,8 @@ import { Button, Card, EmptyNote, ErrorNote, Field, FieldGroup, PageHeader, Text
 
 export interface EventFormValues {
   name: string
-  capacity: number
+  /** null = no limit on simultaneous classes. */
+  capacity: number | null
   active: boolean
   /** null = let the server auto-assign the next unused palette color. */
   color: string | null
@@ -77,7 +78,7 @@ export function EventForm({
   onCancel?: () => void
 }) {
   const [name, setName] = useState(initial.name)
-  const [capacity, setCapacity] = useState(String(initial.capacity))
+  const [capacity, setCapacity] = useState(initial.capacity === null ? '' : String(initial.capacity))
   const [active, setActive] = useState(initial.active)
   const [color, setColor] = useState(initial.color)
   const [error, setError] = useState<string | null>(null)
@@ -86,9 +87,15 @@ export function EventForm({
     e.preventDefault()
     try {
       // Omit color entirely when unset so the server auto-assigns one.
-      await onSave({ name, capacity: Number(capacity), active, color })
+      // A blank capacity means "no limit".
+      await onSave({
+        name,
+        capacity: capacity.trim() === '' ? null : Number(capacity),
+        active,
+        color,
+      })
       setName(initial.name)
-      setCapacity(String(initial.capacity))
+      setCapacity(initial.capacity === null ? '' : String(initial.capacity))
       setActive(initial.active)
       setColor(initial.color)
       setError(null)
@@ -109,14 +116,14 @@ export function EventForm({
             required
           />
         </Field>
-        <Field label="Capacity (classes at once)">
+        <Field label="Class limit (blank = no limit)">
           <TextInput
             type="number"
             min={1}
             max={20}
             value={capacity}
             onChange={(e) => setCapacity(e.target.value)}
-            required
+            placeholder="no limit"
           />
         </Field>
         <label className="flex min-h-11 items-center gap-2 py-2 text-sm font-medium text-slate-700">
@@ -211,7 +218,11 @@ export function EventsPage() {
                     </span>
                   )}
                   <p className="text-sm text-slate-500">
-                    {event.capacity === 1 ? '1 class at a time' : `${event.capacity} classes at a time`}
+                    {event.capacity === null
+                      ? 'no class limit'
+                      : event.capacity === 1
+                        ? '1 class at a time'
+                        : `${event.capacity} classes at a time`}
                     {!event.active && ' · inactive'}
                   </p>
                 </div>

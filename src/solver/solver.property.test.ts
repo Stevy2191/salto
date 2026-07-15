@@ -10,7 +10,8 @@ import type { SolverInput } from './types.ts'
 const arbInput: fc.Arbitrary<SolverInput> = fc
   .record({
     eventCount: fc.integer({ min: 1, max: 6 }),
-    capacities: fc.array(fc.integer({ min: 1, max: 2 }), { minLength: 6, maxLength: 6 }),
+    // null = unlimited simultaneous classes.
+    capacities: fc.array(fc.constantFrom<number | null>(1, 2, null), { minLength: 6, maxLength: 6 }),
     inactiveMask: fc.array(fc.boolean(), { minLength: 6, maxLength: 6 }),
     classCount: fc.integer({ min: 1, max: 8 }),
     requirements: fc.array(

@@ -37,6 +37,44 @@ describe('migration runner', () => {
     expect(rows.every((r) => isHexColor(r.color))).toBe(true)
   })
 
+  it('makes capacity nullable while keeping existing limits and assignments', () => {
+    const db = new DatabaseSync(':memory:')
+    db.exec('PRAGMA foreign_keys = ON')
+    // Simulate a deployment from before optional capacities, with data that
+    // exercises the assignments → events foreign key.
+    runMigrations(db, 4)
+    db.prepare("INSERT INTO events (name, capacity, color) VALUES ('Vault', 2, '#4E79A7')").run()
+    db.prepare("INSERT INTO groups (name) VALUES ('L3')").run()
+    db.prepare(
+      "INSERT INTO sessions (day_of_week, start_time, end_time) VALUES (1, '16:00', '18:00')",
+    ).run()
+    db.prepare(
+      'INSERT INTO assignments (session_id, slot_index, event_id, group_id) VALUES (1, 0, 1, 1)',
+    ).run()
+
+    runMigrations(db)
+
+    // Existing events keep their limits; the rebuild must not cascade into
+    // assignments.
+    expect(db.prepare('SELECT capacity FROM events WHERE id = 1').get()).toMatchObject({
+      capacity: 2,
+    })
+    expect(db.prepare('SELECT COUNT(*) AS n FROM assignments').get()).toMatchObject({ n: 1 })
+
+    // NULL capacity (no limit) is now storable; omitting it defaults to NULL.
+    db.prepare("INSERT INTO events (name, color) VALUES ('Open Gym', '#59A14F')").run()
+    expect(db.prepare("SELECT capacity FROM events WHERE name = 'Open Gym'").get()).toMatchObject({
+      capacity: null,
+    })
+
+    // Foreign keys are enforced again after the rebuild.
+    expect(() =>
+      db
+        .prepare('INSERT INTO assignments (session_id, slot_index, event_id, group_id) VALUES (1, 1, 99, 1)')
+        .run(),
+    ).toThrow(/FOREIGN KEY/)
+  })
+
   it('adds the locked column defaulting to unlocked', () => {
     const db = openDb(':memory:')
     db.prepare('INSERT INTO events (name, color) VALUES (?, ?)').run('Vault', '#4E79A7')

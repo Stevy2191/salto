@@ -8,6 +8,12 @@ import { EVENT_PALETTE } from '../shared/colors.ts'
 interface Migration {
   name: string
   up: (db: DatabaseSync) => void
+  /**
+   * The migration manages its own transaction. Needed when it must toggle
+   * `PRAGMA foreign_keys`, which is a no-op inside a transaction (the
+   * standard SQLite table-rebuild procedure).
+   */
+  ownTransaction?: boolean
 }
 
 export const MIGRATIONS: Migration[] = [
@@ -111,6 +117,45 @@ CREATE TABLE IF NOT EXISTS settings (
       db.exec("ALTER TABLE sessions ADD COLUMN unavailable_events TEXT NOT NULL DEFAULT '[]'")
     },
   },
+  {
+    // Capacity becomes optional: NULL means "no limit on simultaneous
+    // classes". Existing events keep their configured limits — before this
+    // migration every event had one. SQLite can't drop NOT NULL in place,
+    // so this is the standard table rebuild, done with foreign keys off so
+    // dropping the old table can't cascade into assignments.
+    name: 'optional-event-capacity',
+    ownTransaction: true,
+    up: (db) => {
+      db.exec('PRAGMA foreign_keys = OFF')
+      db.exec('BEGIN')
+      try {
+        db.exec(`
+CREATE TABLE events_new (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  capacity INTEGER,
+  active INTEGER NOT NULL DEFAULT 1,
+  is_sample INTEGER NOT NULL DEFAULT 0,
+  color TEXT NOT NULL DEFAULT ''
+);
+INSERT INTO events_new (id, name, capacity, active, is_sample, color)
+  SELECT id, name, capacity, active, is_sample, color FROM events;
+DROP TABLE events;
+ALTER TABLE events_new RENAME TO events;
+`)
+        const broken = db.prepare('PRAGMA foreign_key_check').all()
+        if (broken.length > 0) {
+          throw new Error(`optional-event-capacity broke foreign keys: ${JSON.stringify(broken)}`)
+        }
+        db.exec('COMMIT')
+      } catch (err) {
+        db.exec('ROLLBACK')
+        throw err
+      } finally {
+        db.exec('PRAGMA foreign_keys = ON')
+      }
+    },
+  },
 ]
 
 export function runMigrations(db: DatabaseSync, upTo: number = MIGRATIONS.length): void {
@@ -118,9 +163,18 @@ export function runMigrations(db: DatabaseSync, upTo: number = MIGRATIONS.length
     user_version: number
   }
   for (let i = applied; i < upTo; i++) {
+    const migration = MIGRATIONS[i]!
+    if (migration.ownTransaction) {
+      // The migration commits (or rolls back) itself; record the version
+      // after it succeeds. If the process dies in between, the migration
+      // reruns — rebuild-style migrations are safe to rerun.
+      migration.up(db)
+      db.exec(`PRAGMA user_version = ${i + 1}`)
+      continue
+    }
     db.exec('BEGIN')
     try {
-      MIGRATIONS[i]!.up(db)
+      migration.up(db)
       db.exec(`PRAGMA user_version = ${i + 1}`)
       db.exec('COMMIT')
     } catch (err) {

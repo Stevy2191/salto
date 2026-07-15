@@ -21,14 +21,16 @@ function seed(db: DatabaseSync): void {
     'INSERT INTO events (name, capacity, active, color, is_sample) VALUES (?, ?, 1, ?, 1)',
   )
   const eventIds: Record<string, number> = {}
-  const sampleEvents = [
+  // A mix of limited and unlimited events: apparatus fit one class,
+  // Floor fits two, Conditioning has no limit (null capacity).
+  const sampleEvents: [string, number | null][] = [
     ['Vault', 1],
     ['Uneven Bars', 1],
     ['Balance Beam', 1],
     ['Floor', 2],
     ['Tumble Track', 1],
-    ['Conditioning', 2],
-  ] as const
+    ['Conditioning', null],
+  ]
   sampleEvents.forEach(([name, capacity], index) => {
     eventIds[name] = Number(
       insertEvent.run(name, capacity, EVENT_PALETTE[index % EVENT_PALETTE.length]!).lastInsertRowid,

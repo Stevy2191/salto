@@ -8,8 +8,8 @@
 export interface GymEvent {
   id: number
   name: string
-  /** How many classes can use this event simultaneously. */
-  capacity: number
+  /** Max classes that can use this event simultaneously; null = no limit. */
+  capacity: number | null
   active: boolean
   /** Hex color (#RRGGBB) shown wherever the event appears. */
   color: string

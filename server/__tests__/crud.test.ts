@@ -88,6 +88,30 @@ describe('events CRUD', () => {
     expect(updated.body.event.color).toBe('#59A14F')
   })
 
+  it('treats a missing or null capacity as no limit', async () => {
+    const created = await request(app)
+      .post('/api/events')
+      .set('Cookie', cookie)
+      .send({ name: 'Open Gym' })
+      .expect(201)
+    expect(created.body.event.capacity).toBeNull()
+    const id = created.body.event.id
+
+    const limited = await request(app)
+      .put(`/api/events/${id}`)
+      .set('Cookie', cookie)
+      .send({ name: 'Open Gym', capacity: 3 })
+      .expect(200)
+    expect(limited.body.event.capacity).toBe(3)
+
+    const cleared = await request(app)
+      .put(`/api/events/${id}`)
+      .set('Cookie', cookie)
+      .send({ name: 'Open Gym', capacity: null })
+      .expect(200)
+    expect(cleared.body.event.capacity).toBeNull()
+  })
+
   it('validates capacity and name', async () => {
     await request(app).post('/api/events').set('Cookie', cookie).send({ name: '' }).expect(400)
     await request(app)

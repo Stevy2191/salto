@@ -19,7 +19,9 @@ export function hardConstraintViolations(
   }
   for (const [key, count] of use) {
     const eventId = Number(key.split(':')[0])
-    const capacity = eventById.get(eventId)?.capacity ?? 1
+    const event = eventById.get(eventId)
+    // Unknown events default to capacity 1; a null capacity is unlimited.
+    const capacity = event ? (event.capacity ?? Infinity) : 1
     if (count > capacity) violations.push(`event ${eventId} over capacity: ${key}`)
   }
 

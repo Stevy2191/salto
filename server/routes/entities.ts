@@ -24,7 +24,7 @@ import { withTransaction } from '../tx.ts'
 interface EventRow {
   id: number
   name: string
-  capacity: number
+  capacity: number | null
   active: number
   color: string
   is_sample: number
@@ -101,7 +101,7 @@ const toSession = (r: SessionRow): Session => ({
 
 function parseEvent(body: unknown): {
   name: string
-  capacity: number
+  capacity: number | null
   active: boolean
   color?: string
 } {
@@ -115,7 +115,11 @@ function parseEvent(body: unknown): {
   }
   return {
     name: reqString(obj.name, 'name'),
-    capacity: obj.capacity === undefined ? 1 : reqInt(obj.capacity, 'capacity', 1, 20),
+    // Omitted or null = no limit on simultaneous classes.
+    capacity:
+      obj.capacity === undefined || obj.capacity === null
+        ? null
+        : reqInt(obj.capacity, 'capacity', 1, 20),
     active: obj.active === undefined ? true : reqBool(obj.active, 'active'),
     color,
   }

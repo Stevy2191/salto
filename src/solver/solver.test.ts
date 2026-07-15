@@ -18,7 +18,7 @@ function makeInput(overrides: Partial<SolverInput>): SolverInput {
   }
 }
 
-const event = (id: number, name: string, capacity = 1, active = true) => ({
+const event = (id: number, name: string, capacity: number | null = 1, active = true) => ({
   id,
   name,
   capacity,
@@ -48,6 +48,37 @@ function expectFail(input: SolverInput) {
   expect(result.reasons.length).toBeGreaterThan(0)
   return result
 }
+
+describe('unlimited capacity', () => {
+  it('lets any number of classes share an event with no limit', () => {
+    // Three classes all need the full 2-slot window on one unlimited event —
+    // impossible under any finite capacity below 3.
+    const input = makeInput({
+      slotCount: 2,
+      events: [event(1, 'Open Gym', null)],
+      classes: [
+        cls(1, 'A', [{ eventId: 1, duration: 30 }]),
+        cls(2, 'B', [{ eventId: 1, duration: 30 }]),
+        cls(3, 'C', [{ eventId: 1, duration: 30 }]),
+      ],
+    })
+    const result = expectOk(input)
+    expect(result.assignments).toHaveLength(6)
+  })
+
+  it('still reports overbooking on limited events', () => {
+    const input = makeInput({
+      slotCount: 2,
+      events: [event(1, 'Vault', 1)],
+      classes: [
+        cls(1, 'A', [{ eventId: 1, duration: 30 }]),
+        cls(2, 'B', [{ eventId: 1, duration: 30 }]),
+      ],
+    })
+    const result = expectFail(input)
+    expect(result.reasons.join(' ')).toContain('overbooked')
+  })
+})
 
 describe('trivial session', () => {
   it('schedules one class on one event', () => {

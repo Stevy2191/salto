@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Assignment, GymEvent } from '../../shared/types.ts'
 import { assignmentKey, findConflicts } from './conflicts.ts'
 
-const event = (id: number, capacity = 1, active = true): GymEvent => ({
+const event = (id: number, capacity: number | null = 1, active = true): GymEvent => ({
   id,
   name: `Event ${id}`,
   capacity,
@@ -74,6 +74,14 @@ describe('findConflicts', () => {
 
   it('respects capacity greater than one', () => {
     const conflicts = findConflicts([a(0, 1, 1), a(0, 1, 2)], [event(1, 2)])
+    expect(conflicts.size).toBe(0)
+  })
+
+  it('never flags over-capacity on an event with no limit', () => {
+    const conflicts = findConflicts(
+      [a(0, 1, 1), a(0, 1, 2), a(0, 1, 3), a(0, 1, 4)],
+      [event(1, null)],
+    )
     expect(conflicts.size).toBe(0)
   })
 

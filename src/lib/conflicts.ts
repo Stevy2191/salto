@@ -76,7 +76,8 @@ export function findConflicts(
   const eventById = new Map(events.map((e) => [e.id, e]))
   for (const list of byEventSlot.values()) {
     const event = eventById.get(list[0]!.eventId)
-    const capacity = event?.capacity ?? 1
+    // Unknown events default to capacity 1; a null capacity is unlimited.
+    const capacity = event ? (event.capacity ?? Infinity) : 1
     const distinctClasses = new Set(list.map((a) => a.classId))
     if (distinctClasses.size > capacity) {
       for (const a of list) add(a, 'over-capacity')

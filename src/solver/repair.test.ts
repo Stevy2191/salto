@@ -4,7 +4,7 @@ import { describeRepairChanges, repairSchedule } from './repair.ts'
 import type { RepairInput } from './repair.ts'
 import type { SolverInput } from './types.ts'
 
-const event = (id: number, name: string, capacity = 1, active = true) => ({
+const event = (id: number, name: string, capacity: number | null = 1, active = true) => ({
   id,
   name,
   capacity,

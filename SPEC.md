@@ -37,8 +37,9 @@ No parent/athlete-facing features in v1. Single admin login per instance
 ### Event (station)
 Fully user-defined — the examples below are illustrative, never a fixed list.
 - `name` (e.g., Vault, Uneven Bars, Beam, Floor, Tumble Track, Pit, Conditioning)
-- `capacity` — how many classes can use it simultaneously (usually 1; floor
-  might fit 2)
+- `capacity` — optional limit on how many classes can use it simultaneously
+  (apparatus usually 1; floor might fit 2). Unset means no limit — think
+  open stretching areas or conditioning.
 - `active` — can be marked unavailable (equipment down)
 - `color` — hex color shown everywhere the event appears (grid, Excel
   export, print view). Users pick from a curated palette of distinct,
@@ -77,7 +78,8 @@ storage keeps the original `groups` table name behind the server's mappers.
 This is the heart of the app. Treat it as a constraint-satisfaction problem:
 
 **Hard constraints (never violated):**
-1. An event's simultaneous classes never exceed its capacity.
+1. An event's simultaneous classes never exceed its capacity (events
+   without a limit are unconstrained).
 2. A class is in exactly one place at a time.
 3. A coach is in exactly one place at a time.
 4. Each class completes all of its required events with their full durations
