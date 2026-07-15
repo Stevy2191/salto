@@ -17,14 +17,15 @@ All three phases below are implemented — **v1 is feature-complete**.
 **Phase 1 — Setup & manual grid**
 - CRUD for events, coaches, classes, and sessions
 - Guided first-run setup, plus a one-click (and one-click-removable) example gym
-- A schedule grid (events × time slots, toggleable to classes × time slots) with manual drag-and-drop / click-to-assign editing
-- Conflict highlighting when a cell is double-booked
+- The schedule grid: classes as columns, time as 5-minute rows. Each column is a *lane* that can run several classes back to back (LV 1 → LV 2 → VYC 2), each with its own time window inside the session — so a class is never forced to fill the whole evening
+- Build it by **dragging**: pick an event and drag down a class's rows to paint it. Painting overwrites, block edges drag to resize, and an eraser clears. No setup required
+- Conflict highlighting: overlapping classes in a lane, a double-booked coach, an over-capacity event
 - Data persistence
 - Dockerfile + docker-compose.yml working end to end
 - First-run admin account creation + login
 
-**Phase 2 — Auto-generation**
-- Generate a conflict-free schedule for a session with the constraint solver
+**Phase 2 — Auto-generation** (optional; painting is the primary path)
+- Generate a conflict-free schedule with the constraint solver, filling each class's own window
 - Clear reporting of unmet constraints when generation fails
 - "Shuffle" — regenerate with a different seed for alternative layouts
 - Lock cells and regenerate around them
@@ -40,7 +41,7 @@ All three phases below are implemented — **v1 is feature-complete**.
 
 Scheduling is treated as a constraint-satisfaction problem over time slots of the session's rotation length.
 
-Hard constraints (never violated): event capacity is respected, each class and each coach is in exactly one place at a time, every class completes all required events with their full durations inside the session window, and inactive events are never used.
+Hard constraints (never violated): event capacity is respected, each class and each coach is in exactly one place at a time, every class completes all required events with their full durations inside **that class's own window**, and inactive events are never used.
 
 Soft constraints (optimized in priority order): higher-priority classes get their layout first, idle time is minimized, configurable adjacency penalties avoid back-to-back high-intensity events, and coaches stay with their class (or event, depending on gym mode).
 

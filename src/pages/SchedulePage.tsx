@@ -805,8 +805,8 @@ export function SchedulePage() {
                           }`}
                         >
                           {placementConflicts ? '⚠ ' : ''}
-                          {cls?.name ?? 'Unknown class'}
-                          <span className="ml-1 font-normal opacity-80">
+                          {cls?.name ?? 'Unknown class'}{' '}
+                          <span className="font-normal opacity-80">
                             {formatRange(p.startMin, p.endMin)}
                           </span>
                         </button>
@@ -856,13 +856,10 @@ export function SchedulePage() {
           onClose={() => setAddingTo(null)}
           onAdd={(classId, from, to) => {
             const next = addPlacement(schedule, classId, addingTo, from, to)
-            if (!next) {
-              setSaveError(
-                'That column already has a class at those times — a column holds one class at a time.',
-              )
-              return false
-            }
-            setSaveError(null)
+            // The dialog says why; it has the user's attention and the
+            // fields they'd need to change. Repeating it on the page behind
+            // would just be the same sentence twice.
+            if (!next) return false
             apply(next)
             setAddingTo(null)
             return true
