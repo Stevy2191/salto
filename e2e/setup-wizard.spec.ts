@@ -201,14 +201,20 @@ test('blank cells show outside a class window, never a forced fill', async ({ pa
   await page.getByLabel('class starts').fill('17:00')
   await page.getByLabel('class ends').fill('17:30')
   await page.getByRole('button', { name: 'Add class', exact: true }).click()
-  await expect(page.getByText('LV 1 17:00–17:30')).toBeVisible()
+
+  // Find it by its own header rather than by DOM order: saving swaps the
+  // placement's local id for the server's, so anything positional can be
+  // looking at a detached element.
+  const partial = page
+    .locator('[data-testid^="placement-"]')
+    .filter({ hasText: 'LV 1 17:00–17:30' })
+  await expect(partial).toHaveCount(1)
 
   // The placement covers only its own window — 30 of the session's 120
   // minutes — leaving the rest of the lane blank rather than filled.
-  const placements = page.locator('[data-testid^="placement-"]')
-  const partial = placements.last()
-  const box = (await partial.boundingBox())!
-  expect(Math.round(box.height)).toBe((30 / 5) * ROW_H)
+  await expect
+    .poll(async () => Math.round((await partial.boundingBox())?.height ?? 0))
+    .toBe((30 / 5) * ROW_H)
 })
 
 test('drag to paint an event across several 5-minute blocks', async ({ page }) => {
