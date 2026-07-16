@@ -65,19 +65,28 @@ A facility offering that groups classes: "Preschool", "Rec Gym", "Team".
   (Preschool 16:00–17:00 while Rec Gym runs 17:00–19:00).
 
 A program is how a gym's structure is entered in bulk: classes hang off it,
-and a session can take on a whole program's worth of classes at once.
+and the Classes and Sessions views group by program.
 
 ### Class (training group)
 Called "group" in early versions — the UI and API now say "class"; SQLite
 storage keeps the original `groups` table name behind the server's mappers.
+
+**A class owns its own schedule.** The class — not a manually created session
+— is the source of truth for *when* it meets. Everything about a practice
+slot is derived from the classes that meet in it.
 - `name` (e.g., "Tiny Tot 1", "Rec Gym 1", "Level 3 Girls")
 - `programId` — the program it belongs to
+- `daysOfWeek` — **which days it meets** (e.g. Mondays; or Mon + Wed), as a
+  set of weekdays (0 = Sunday … 6 = Saturday).
+- `startTime` — **the clock time it starts** on each of those days (e.g. 5:00
+  PM). A class meets at the same time on every day it runs.
+- `periodMinutes` — the class's total period length (e.g. 45 min); its window
+  is `startTime … startTime + periodMinutes`.
 - `level` / priority — higher-priority classes get first pick when conflicts
   arise (e.g., optionals over recreational)
 - `eligibleEvents` — **the subset of facility events this class may use.**
   A class does *not* visit all of them in one period; it draws from this
   list. (LWM: PS Bars, PS Vault, Tumble Trak, PS Floor, Rec Beams.)
-- `periodMinutes` — the class's total period length (e.g. 45 min).
 - `warmupEvent` / `warmupMinutes` — an optional fixed **opening** block: a
   stretch that leads every period, a length set per class. Usually a shared
   event.
@@ -100,23 +109,35 @@ visible before generating.
 together at the session's times. That is *why* the no-collision rule bites:
 at any moment two classes must not be on the same exclusive event.
 
-### Session (practice block)
-- `date` — the **specific calendar day** this practice happens (e.g.
-  Monday, March 3), not a generic weekly slot: Monday week 1 differs from
-  Monday week 2, and Monday differs from Tuesday. Session lists are sorted
-  chronologically.
-- `startTime`, `endTime` — the session's **master window** (e.g. 4:00–8:00).
-  This is the time axis of the grid, drawn in fixed **5-minute rows**.
-- `columnCount` — how many columns (lanes) the grid has.
+### Session (practice slot) — **auto-derived, never manually created**
+A session is a **weekly day + start-time slot** — "Monday 5:00 PM" — and it
+is **derived automatically** from the classes that meet then. It is not a
+dated event and it is not created by hand.
+
+- `dayOfWeek` + `startTime` together **identify** the slot. Salto groups every
+  class by `(day, startTime)`: all classes meeting Monday at 5:00 form the
+  "Monday 5:00 PM" session. A class that meets Mon *and* Wed contributes to
+  two slots.
+- `endTime` — **derived**: the latest end among the slot's classes
+  (`max(startTime + periodMinutes)`). This is the grid's time axis, drawn in
+  fixed **5-minute rows**.
+- Each slot carries its own **repeating 4-week plan** (locks, warnings, the
+  generated blocks) — see Generation.
+
+There is no manual "Add session" form and no session dates. The Sessions page
+is a **read-only view** of the auto-grouped slots; the way to change what a
+session contains is to change a class's schedule on the Classes page.
+Reconciliation (create the slot when the first class adopts its day/time,
+drop it when the last class leaves) is automatic.
 
 There is no session-wide "rotation length": the axis is always 5 minutes and
-every boundary snaps to it. Rotation lengths are a per-class, per-block
-matter now — a class's blocks are whatever the user paints.
+every boundary snaps to it.
 
-Repeating a practice week to week is **copying a session onto a new date**
-(the copy prompts for it, defaulting a week out) — that is the primary
-weekly workflow, not a recurrence rule. Recurring templates remain a
-nice-to-have (see below).
+**One repeating 4-week plan per slot.** A slot's plan is the rotation it runs
+*every* week of the month, cycling week 1 → 2 → 3 → 4 → 1. Repeating a
+practice is not copying anything — the same slot simply recurs; regenerating
+its plan re-rolls the four weeks. Each slot's plan is independent of every
+other slot's.
 
 ### Column (lane)
 A session's grid is a set of columns. **A column is not a class.** It is a
@@ -131,13 +152,16 @@ moved to another column.
   window (e.g. Silver 4:00–7:00), snapped to 5 minutes
 
 Placements in the same column **must not overlap in time** — that is the
-one hard rule of the lane model, and it is rejected/flagged. One column can
-hold LV 1 (4:00–5:00), then LV 2 (5:00–6:00), then VYC 2 (6:00–8:00). Times
-a column has no class present — before the first, between two, after the
-last — are simply **blank**. A class is never forced to fill the timeline.
+one hard rule of the lane model, and it is rejected/flagged. Times a column
+has no class present are simply **blank**; a class is never forced to fill
+the timeline.
 
-Attendance is expressed *entirely* by placements: a class is in a session
-because it is placed somewhere in it. There is no separate attending list.
+**Attendance is derived from each class's schedule, not gathered by hand.**
+A class is in a slot because its `(day, startTime)` matches that slot; Salto
+places it in its own column, in every week of the slot's plan, spanning its
+own `startTime … startTime + periodMinutes` window. There is no manual
+"add class to session" step and no attending list — editing a class's
+schedule is what moves it between slots.
 
 ### Event block (what a class is doing, when)
 - Belongs to a placement, so it always lives inside that class's window
@@ -208,11 +232,13 @@ moving and resizing are what a generated schedule needs most.
 It must be fluid: minimal clicks, no keyboard needed, mouse or touch.
 
 ### Generation — a 4-week plan, the primary deliverable
-A session **gathers the classes attending** (pick a whole program, or pick
-classes individually) onto one shared clock. "Generate" then produces **four
-weeks of rotations at once** — same classes, same clock every week, a
-*different* selection of events each week. This, not a single day's
-schedule, is the thing gyms actually want out of Salto.
+Each **auto-derived slot** already holds its classes (everything meeting that
+day and time, each on the shared clock). "Generate" produces that slot's
+**four weeks of rotations at once** — same classes, same clock every week, a
+*different* selection of events each week — and that four-week cycle is the
+slot's **repeating monthly plan**. This, not a single day's schedule, is the
+thing gyms actually want out of Salto. Every slot has its own plan; generating
+one never touches another.
 
 Each week, each class draws a subset of its eligible events that fills its
 period (after the warm-up and cool-down), in a randomized order — varied
@@ -282,14 +308,18 @@ flags), single-class trivial.
 ### Phase 1 — Setup & manual grid (walking skeleton)
 - CRUD for programs, events, coaches, classes, sessions — this structure is
   the main input, so entering it has to be fast
-- **First-run experience:** a new gym sees an empty database and goes
-  straight to the app — the Events / Classes / Coaches / Sessions pages are
-  the setup. The home page points at them and offers **"load example gym"**,
-  which seeds realistic sample data (clearly fictional names) so users can
-  explore before entering their own. Sample data must be one-click
-  removable. There is deliberately **no guided wizard**: it was tried and
-  removed — it added a parallel way to do everything the normal pages
-  already do, and a step order that real gyms don't follow.
+- **First-run experience — an ordered helper over the real pages, not a
+  wizard.** A new gym is guided through the natural build order —
+  **Step 1 Events → Step 2 Programs → Step 3 Classes → Step 4 Sessions** —
+  with clear "Next" progression. Crucially this is *not* a locked overlay or a
+  parallel set of throwaway screens (that earlier wizard was removed for
+  exactly those reasons): every step is just the normal, independently-usable
+  page, the full top nav stays visible the whole time, and the user can jump
+  anywhere or leave the flow at any point. Once setup is done it stays out of
+  the way — a dismissible progress hint on Home is enough; all pages remain
+  freely navigable always. The home page also offers **"load example gym"**,
+  which seeds realistic sample data (clearly fictional names, one-click
+  removable) so users can explore before entering their own.
 - The schedule grid: **classes as columns, time as rows** (5-minute rows).
   It **displays** what generation decided and is where the schedule gets
   hand-tweaked; the generator, not the grid, is what puts a class on an
@@ -304,12 +334,13 @@ This phase alone already beats the whiteboard, and it validates the data
 model before the solver is built.
 
 ### Phase 2 — Auto-generation *(the primary path — see "Building a schedule")*
-- Gather a session's classes by program or individually, then "Generate" a
-  complete conflict-free rotation from the entered structure
-- Show unmet constraints clearly when generation fails
-- Regenerate with a different seed ("shuffle") to get alternative layouts
-- Manual overrides on top of a generated schedule (lock a cell, regenerate
-  around locks)
+- Open an auto-derived slot (its classes are already in it) and "Generate" its
+  repeating 4-week plan from the entered structure
+- Show unmet constraints clearly when a slot's plan can't fully cover
+- Regenerate with a different seed ("re-randomize") for alternative layouts,
+  keeping any locked week
+- Manual overrides on top of a generated week (lock a block, regenerate around
+  locks)
 
 ### Phase 3 — Day-of changes & output
 - Mark a coach absent or an event down → regenerate around locked/kept
@@ -327,8 +358,8 @@ model before the solver is built.
   automatically from the fill's brightness so it stays readable when
   printed from Excel. Set up to print landscape and tile across pages with
   the header row and time column repeating.
-- Copy a session onto a new date — the weekly workflow: last Monday's
-  practice becomes this Monday's, schedule and all
+- A slot's plan repeats every week automatically — there is no per-week copy
+  step; the four-week cycle *is* the recurring schedule.
 
 ### Later / nice-to-have (not v1)
 - Coach login and read-only sharing links
@@ -410,10 +441,16 @@ simple and single-gym:
 
 ## UX Notes
 
-- **Entering the structure is now the main input**, so the Programs /
-  Classes / Events pages carry as much weight as the grid: grouped, quick to
-  fill in, and honest about whether a class's events fit its window before
-  the user hits Generate.
+- **Top-nav order follows the build order:** Home · Events · Programs ·
+  Classes · Sessions · Coaches. Events → Programs → Classes are the setup
+  steps left to right; Sessions is the payoff view (the auto-grouped slots you
+  generate); Coaches is last (not yet part of generation).
+- **The Classes page is the main input now** — a class is where day/time/
+  length, program, eligible events, and warm-up/cool-down are all entered in
+  one place, grouped by program, honest about whether the events fit the
+  period before Generate, with a "copy setup from another class" shortcut so
+  repeating the same eligible-event sets across many classes isn't tedious.
+  The Events / Programs pages feed it.
 - The schedule grid is the product. Invest there: readable at a glance,
   color-coded by event, dense but not cramped.
 - **It has to hold up at real size.** A session routinely runs 16+ classes

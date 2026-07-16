@@ -15,9 +15,10 @@ Salto is a general-purpose product: every gym defines its own events/stations, e
 All three phases below are implemented — **v1 is feature-complete**.
 
 **Phase 1 — Setup & manual grid**
-- CRUD for **programs**, events, coaches, classes, and sessions — you enter your gym's structure once
+- CRUD for **programs**, events, coaches, and classes — you enter your gym's structure once, in build order (Events → Programs → Classes → Sessions), with a first-run helper that guides the steps while leaving every page freely navigable
 - A one-click (and one-click-removable) fictional example gym to explore before entering your own
-- Every **event** carries its own duration and a shared/exclusive tag; a class belongs to a **program** and lists the events it's *eligible* for plus its period, warm-up and cool-down lengths
+- Every **event** carries its own duration and a shared/exclusive tag; a **class owns its schedule** — its program, the day(s) it meets, its start time and period length, the events it's *eligible* for, and its warm-up/cool-down — all entered in one place, grouped by program, with a "copy setup from another class" shortcut
+- **Sessions are auto-derived, never created by hand:** classes are grouped by day + start time into weekly slots ("Monday 5:00 PM"), and the Sessions page is a read-only view of those slots
 - The schedule grid: classes as columns, time as 5-minute rows, one per week with a Week 1–4 switcher, plus a coverage panel showing which events each class still needs
 - Hand-editing for cleanup: drag a block's body to move it, its edge to resize, paint into empty rows, erase. A live tooltip says what the drag will do; a move that would collide is refused rather than eating your work
 - Conflict highlighting: overlapping classes in a lane, a double-booked coach, an over-capacity event
@@ -26,7 +27,7 @@ All three phases below are implemented — **v1 is feature-complete**.
 - First-run admin account creation + login
 
 **Phase 2 — Auto-generation** (the primary path)
-- Add a session's classes, hit **Generate**, and get a **four-week rotation plan**: each week draws a different mix of each class's eligible events, every eligible event is hit at least twice across the four weeks, warm-ups lead and cool-downs close, and no two classes are ever on the same exclusive apparatus at once. Lock a week and re-randomize the rest; gaps that can't be filled are flagged in plain language
+- Open an auto-grouped slot (its classes are already there) and hit **Generate** for its **repeating four-week rotation plan**: each week draws a different mix of each class's eligible events, every eligible event is hit at least twice across the four weeks, warm-ups lead and cool-downs close, and no two classes are ever on the same exclusive apparatus at once. Lock a week and re-randomize the rest; gaps that can't be filled are flagged in plain language. Each slot's plan is independent and repeats every week — there's no per-week copying
 - Clear reporting of unmet constraints when generation fails
 - "Shuffle" — regenerate with a different seed for alternative layouts
 - Lock cells and regenerate around them
@@ -34,8 +35,8 @@ All three phases below are implemented — **v1 is feature-complete**.
 **Phase 3 — Day-of changes & output**
 - Mark a coach absent or an event out for a single session; affected cells are flagged, and "Repair schedule" fixes only what the outage touches — with a plain-language summary of what changed
 - Print view: black-and-white-friendly block layout in the event colors, plus per-class "where do I go next" strips for handing to coaches
-- Colored Excel export matching gyms' hand-made sheets
-- Copy a session onto a new date — same classes, schedule, and duration — which is how a weekly practice repeats
+- Colored Excel export (a sheet per week) matching gyms' hand-made sheets
+- A slot's four-week plan repeats every week automatically — the cycle *is* the recurring schedule, so there's no per-week copy step
 - Light and dark mode, toggled from the header (sun = light, half moon = dark) and remembered per browser; defaults to your OS setting. The print view stays black-on-white whatever the screen is doing.
 
 ## How scheduling works
