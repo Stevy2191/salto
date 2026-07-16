@@ -33,32 +33,32 @@ interface ClassSpec {
   periodMinutes: number
   warmup: [string, number] // [event, minutes]
   cooldown: [string, number]
-  eligible: string[]
+  /** [event, minutes this class spends there per visit] */
+  eligible: [string, number][]
   coach: string
 }
 
 function seed(db: DatabaseSync): void {
-  // --- Events: [name, durationPerVisit, shared?] ---
+  // --- Events: [name, shared?]. Events have no duration; the class carries it. ---
   const insertEvent = db.prepare(
-    'INSERT INTO events (name, duration_minutes, shared, capacity, active, color, is_sample) VALUES (?, ?, ?, ?, 1, ?, 1)',
+    'INSERT INTO events (name, shared, capacity, active, color, is_sample) VALUES (?, ?, ?, 1, ?, 1)',
   )
   const eventIds: Record<string, number> = {}
-  const sampleEvents: [string, number, boolean][] = [
-    ['Warm-up', 10, true], // shared: everyone warms up together
-    ['Tumble Trak', 15, false], // exclusive, contested across programs
-    ['PS Vault', 10, false],
-    ['PS Bars', 10, false],
-    ['PS Floor', 10, false],
-    ['Rec Beams', 10, false],
-    ['Trampoline', 15, false],
-    ['Conditioning', 10, true], // shared
-    ['Stretch', 10, true], // shared: cool-down
+  const sampleEvents: [string, boolean][] = [
+    ['Warm-up', true], // shared: everyone warms up together
+    ['Tumble Trak', false], // exclusive, contested across programs
+    ['PS Vault', false],
+    ['PS Bars', false],
+    ['PS Floor', false],
+    ['Rec Beams', false],
+    ['Trampoline', false],
+    ['Conditioning', true], // shared
+    ['Stretch', true], // shared: cool-down
   ]
-  sampleEvents.forEach(([name, duration, shared], index) => {
+  sampleEvents.forEach(([name, shared], index) => {
     eventIds[name] = Number(
       insertEvent.run(
         name,
-        duration,
         shared ? 1 : 0,
         shared ? null : 1,
         EVENT_PALETTE[index % EVENT_PALETTE.length]!,
@@ -106,7 +106,7 @@ function seed(db: DatabaseSync): void {
           periodMinutes: 60,
           warmup: ['Warm-up', 10],
           cooldown: ['Stretch', 10],
-          eligible: ['Tumble Trak', 'PS Vault', 'PS Floor'],
+          eligible: [['Tumble Trak', 15], ['PS Vault', 10], ['PS Floor', 10]],
           coach: 'Dana Marsh',
         },
         {
@@ -117,7 +117,7 @@ function seed(db: DatabaseSync): void {
           periodMinutes: 60,
           warmup: ['Warm-up', 10],
           cooldown: ['Stretch', 10],
-          eligible: ['Tumble Trak', 'PS Bars', 'PS Floor'],
+          eligible: [['Tumble Trak', 15], ['PS Bars', 10], ['PS Floor', 10]],
           coach: 'Dana Marsh',
         },
       ],
@@ -134,7 +134,7 @@ function seed(db: DatabaseSync): void {
           periodMinutes: 60,
           warmup: ['Warm-up', 10],
           cooldown: ['Conditioning', 10],
-          eligible: ['Tumble Trak', 'Rec Beams', 'PS Vault', 'Trampoline'],
+          eligible: [['Tumble Trak', 15], ['Rec Beams', 10], ['PS Vault', 10], ['Trampoline', 15]],
           coach: 'Sam Ortiz',
         },
         {
@@ -145,7 +145,7 @@ function seed(db: DatabaseSync): void {
           periodMinutes: 60,
           warmup: ['Warm-up', 10],
           cooldown: ['Conditioning', 10],
-          eligible: ['Tumble Trak', 'Rec Beams', 'PS Bars', 'Trampoline'],
+          eligible: [['Tumble Trak', 15], ['Rec Beams', 10], ['PS Bars', 10], ['Trampoline', 15]],
           coach: 'Jules Baptiste',
         },
       ],
@@ -163,7 +163,7 @@ function seed(db: DatabaseSync): void {
         spec.priority,
         JSON.stringify(spec.daysOfWeek),
         spec.startTime,
-        JSON.stringify(spec.eligible.map((n) => eventIds[n]!)),
+        JSON.stringify(spec.eligible.map(([n, m]) => ({ eventId: eventIds[n]!, minutes: m }))),
         spec.periodMinutes,
         eventIds[spec.warmup[0]]!,
         spec.warmup[1],

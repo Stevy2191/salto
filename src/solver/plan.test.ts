@@ -101,21 +101,21 @@ function violations(plan: PlanResult, input: PlanInput): string[] {
 const coverageMet = (plan: PlanResult, floor = 2): boolean =>
   plan.ok && plan.coverage.every((c) => c.events.every((e) => e.visits >= floor))
 
-const events = (specs: [number, string, number, boolean][]): PlanEvent[] =>
-  specs.map(([id, name, duration, shared]) => ({ id, name, duration, shared, active: true }))
+const events = (specs: [number, string, boolean][]): PlanEvent[] =>
+  specs.map(([id, name, shared]) => ({ id, name, shared, active: true }))
 
 describe('generatePlan — comfortably solvable', () => {
   const evts = events([
-    [1, 'Warm-up', 10, true],
-    [2, 'Stretch', 10, true],
-    [3, 'Vault', 15, false],
-    [4, 'Bars', 15, false],
+    [1, 'Warm-up', true],
+    [2, 'Stretch', true],
+    [3, 'Vault', false],
+    [4, 'Bars', false],
   ])
   const cls = (id: number, name: string, priority: number) => ({
     id,
     name,
     priority,
-    eligibleEventIds: [3, 4],
+    eligibleEvents: [{ eventId: 3, minutes: 15 }, { eventId: 4, minutes: 15 }],
     periodMinutes: 60,
     warmupEventId: 1,
     warmupMinutes: 10,
@@ -160,12 +160,12 @@ describe('generatePlan — comfortably solvable', () => {
 describe('generatePlan — tightly contested (coverage impossible)', () => {
   // Three classes all want the one exclusive Trak, in a window that fits a
   // single visit per week. Four weeks / three classes can't give everyone two.
-  const evts = events([[1, 'Tumble Trak', 30, false]])
+  const evts = events([[1, 'Tumble Trak', false]])
   const cls = (id: number, name: string) => ({
     id,
     name,
     priority: 0,
-    eligibleEventIds: [1],
+    eligibleEvents: [{ eventId: 1, minutes: 30 }],
     periodMinutes: 35,
     warmupEventId: null,
     warmupMinutes: 0,
@@ -198,13 +198,13 @@ describe('generatePlan — tightly contested (coverage impossible)', () => {
 
 describe('generatePlan — single class, trivial', () => {
   const input = baseInput({
-    events: events([[1, 'Floor', 15, false]]),
+    events: events([[1, 'Floor', false]]),
     classes: [
       {
         id: 1,
         name: 'Solo',
         priority: 0,
-        eligibleEventIds: [1],
+        eligibleEvents: [{ eventId: 1, minutes: 15 }],
         periodMinutes: 60,
         warmupEventId: null,
         warmupMinutes: 0,
@@ -228,9 +228,9 @@ describe('generatePlan — single class, trivial', () => {
 
 describe('generatePlan — locks and determinism', () => {
   const evts = events([
-    [1, 'Warm-up', 10, true],
-    [2, 'Vault', 15, false],
-    [3, 'Bars', 15, false],
+    [1, 'Warm-up', true],
+    [2, 'Vault', false],
+    [3, 'Bars', false],
   ])
   // Built once so every variant shares the same placement ids — the plan is
   // only identifiable across runs if the lanes are the same objects.
@@ -242,7 +242,7 @@ describe('generatePlan — locks and determinism', () => {
         id: 1,
         name: 'Alpha',
         priority: 0,
-        eligibleEventIds: [2, 3],
+        eligibleEvents: [{ eventId: 2, minutes: 15 }, { eventId: 3, minutes: 15 }],
         periodMinutes: 45,
         warmupEventId: 1,
         warmupMinutes: 10,

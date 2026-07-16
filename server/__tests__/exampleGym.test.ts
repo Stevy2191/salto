@@ -30,11 +30,10 @@ describe('example gym', () => {
     expect(sessions).toHaveLength(2)
     expect(events.every((e) => e.isSample)).toBe(true)
 
-    // Sample events mix shared and exclusive, and every duration lands on the
-    // 5-minute axis.
+    // Sample events mix shared and exclusive, and carry no duration.
     expect(events.some((e) => e.shared)).toBe(true)
     expect(events.some((e) => !e.shared)).toBe(true)
-    expect(events.every((e) => isSnapped(e.duration) && e.duration > 0)).toBe(true)
+    expect(events.every((e) => !('duration' in e))).toBe(true)
 
     // Sessions are auto-derived weekly slots — the Monday and Wednesday 16:00
     // slots the classes' schedules imply — labelled by day and time.
@@ -46,7 +45,10 @@ describe('example gym', () => {
     // their warm-up/cool-down anchors point at seeded events too.
     const eventIds = new Set(events.map((e) => e.id))
     for (const cls of classes) {
-      for (const id of cls.eligibleEventIds) expect(eventIds.has(id)).toBe(true)
+      for (const e of cls.eligibleEvents) {
+        expect(eventIds.has(e.eventId)).toBe(true)
+        expect(isSnapped(e.minutes) && e.minutes > 0).toBe(true)
+      }
       if (cls.warmupEventId !== null) expect(eventIds.has(cls.warmupEventId)).toBe(true)
       if (cls.cooldownEventId !== null) expect(eventIds.has(cls.cooldownEventId)).toBe(true)
     }
@@ -111,12 +113,12 @@ describe('example gym', () => {
 
     // A class's eligible list can hold more events than fit one period — the
     // reason coverage is spread across four weeks. Middle time is the period
-    // minus its warm-up and cool-down.
-    const byId = new Map(events.map((e) => [e.id, e]))
+    // minus its warm-up and cool-down; each eligible event carries its own
+    // per-class minutes.
     expect(
       classes.some((c) => {
         const middle = c.periodMinutes - c.warmupMinutes - c.cooldownMinutes
-        const fit = c.eligibleEventIds.reduce((sum, id) => sum + (byId.get(id)?.duration ?? 0), 0)
+        const fit = c.eligibleEvents.reduce((sum, e) => sum + e.minutes, 0)
         return fit > middle
       }),
     ).toBe(true)
@@ -125,7 +127,7 @@ describe('example gym', () => {
     // eligible for — the contention the generator exists to resolve.
     const trak = events.find((e) => e.name === 'Tumble Trak')!
     expect(trak.shared).toBe(false)
-    const wantTrak = classes.filter((c) => c.eligibleEventIds.includes(trak.id))
+    const wantTrak = classes.filter((c) => c.eligibleEvents.some((e) => e.eventId === trak.id))
     expect(wantTrak.length).toBeGreaterThanOrEqual(3)
     expect(new Set(wantTrak.map((c) => c.programId)).size).toBeGreaterThan(1)
   })

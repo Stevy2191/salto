@@ -5,7 +5,8 @@ import { generatePlan } from './plan.ts'
 import type { PlanInput, PlanResult } from './plan.ts'
 
 // Random-but-plausible four-week plans. All classes run the same clock (one
-// session window), events carry a duration and a shared/exclusive flag, and
+// session window), events carry only a shared/exclusive flag (duration is per
+// class-event), and
 // classes draw from an eligible subset. Feasibility is NOT guaranteed — the
 // property is that the plan is always internally valid and honestly flagged,
 // never that every event reaches the coverage floor.
@@ -36,7 +37,6 @@ const arbInput: fc.Arbitrary<PlanInput> = fc
     const events = Array.from({ length: raw.eventCount }, (_, i) => ({
       id: i + 1,
       name: `Event ${i + 1}`,
-      duration: raw.durations[i]! * 5,
       shared: raw.sharedMask[i]!,
       active: i === 0 ? true : !raw.inactiveMask[i],
     }))
@@ -44,14 +44,18 @@ const arbInput: fc.Arbitrary<PlanInput> = fc
       // Event 1 is the warm-up/cool-down anchor, so it is never also an
       // eligible rotation event — matching how gyms set up (shared warm-ups,
       // exclusive apparatus). This keeps coverage counting middle rotations.
-      const eligible = events.filter((_, i) => i !== 0 && raw.eligibleMasks[g]![i]).map((e) => e.id)
+      // Duration is per class-event, seeded from a base per-event length.
+      const eligible = events
+        .map((e, i) => ({ eventId: e.id, i }))
+        .filter(({ i }) => i !== 0 && raw.eligibleMasks[g]![i])
+        .map(({ eventId, i }) => ({ eventId, minutes: raw.durations[i]! * 5 }))
       const warm = raw.warmups[g]!
       const cool = raw.cooldowns[g]!
       return {
         id: g + 1,
         name: `Class ${g + 1}`,
         priority: raw.priorities[g]!,
-        eligibleEventIds: eligible,
+        eligibleEvents: eligible,
         periodMinutes: raw.periods[g]! * 5,
         warmupEventId: warm ? 1 : null,
         warmupMinutes: warm ? 10 : 0,
@@ -160,7 +164,9 @@ describe('plan properties', () => {
       fc.property(arbInput, (input) => {
         const plan = generatePlan(input)
         if (!plan.ok) return
-        const eligibleOf = new Map(input.classes.map((c) => [c.id, c.eligibleEventIds]))
+        const eligibleOf = new Map(
+          input.classes.map((c) => [c.id, c.eligibleEvents.map((e) => e.eventId)]),
+        )
         for (const cls of plan.coverage) {
           expect(cls.events.map((e) => e.eventId).sort()).toEqual(
             [...(eligibleOf.get(cls.classId) ?? [])].sort(),

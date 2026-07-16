@@ -113,7 +113,11 @@ describe('classes belong to a program and carry structure', () => {
     const created = await post('/api/classes', {
       name: 'Tiny Tot 1',
       programId: program.id,
-      eligibleEventIds: [e1, e2, e3],
+      eligibleEvents: [
+        { eventId: e1, minutes: 10 },
+        { eventId: e2, minutes: 15 },
+        { eventId: e3, minutes: 20 },
+      ],
       periodMinutes: 60,
       warmupEventId: warm,
       warmupMinutes: 10,
@@ -123,7 +127,11 @@ describe('classes belong to a program and carry structure', () => {
 
     expect(created.body.class).toMatchObject({
       programId: program.id,
-      eligibleEventIds: [e1, e2, e3],
+      eligibleEvents: [
+        { eventId: e1, minutes: 10 },
+        { eventId: e2, minutes: 15 },
+        { eventId: e3, minutes: 20 },
+      ],
       periodMinutes: 60,
       warmupEventId: warm,
       warmupMinutes: 10,
@@ -136,27 +144,27 @@ describe('classes belong to a program and carry structure', () => {
     await post('/api/classes', { name: 'X', programId: 999 }).expect(404)
   })
 
-  it('lets two classes in different programs be eligible for the same event', async () => {
+  it('lets two classes share an event at different per-class durations', async () => {
     const a = (await post('/api/programs', { name: 'Preschool' })).body.program
     const b = (await post('/api/programs', { name: 'Rec Gym' })).body.program
     const trak = (await post('/api/events', { name: 'Tumble Trak' })).body.event
+    // Duration lives on the class-event pairing, so the same apparatus can be
+    // 15 min for one class and 20 for another.
     await post('/api/classes', {
       name: 'Tiny Tot 1',
       programId: a.id,
-      eligibleEventIds: [trak.id],
+      eligibleEvents: [{ eventId: trak.id, minutes: 15 }],
     }).expect(201)
     await post('/api/classes', {
       name: 'Rec Gym 1',
       programId: b.id,
-      eligibleEventIds: [trak.id],
+      eligibleEvents: [{ eventId: trak.id, minutes: 20 }],
     }).expect(201)
 
-    // Events are facility-wide: the contention over an exclusive event is the
-    // generator's problem, not something the model forbids.
     const classes = (await request(app).get('/api/classes').set('Cookie', cookie)).body.classes
-    expect(classes.map((c: { eligibleEventIds: number[] }) => c.eligibleEventIds)).toEqual([
-      [trak.id],
-      [trak.id],
+    expect(classes.map((c: { eligibleEvents: unknown[] }) => c.eligibleEvents)).toEqual([
+      [{ eventId: trak.id, minutes: 15 }],
+      [{ eventId: trak.id, minutes: 20 }],
     ])
   })
 })

@@ -22,14 +22,11 @@ describe('events CRUD', () => {
     const created = await request(app)
       .post('/api/events')
       .set('Cookie', cookie)
-      .send({ name: 'Vault', duration: 10 })
+      .send({ name: 'Vault' })
       .expect(201)
-    expect(created.body.event).toMatchObject({
-      name: 'Vault',
-      duration: 10,
-      shared: false,
-      active: true,
-    })
+    expect(created.body.event).toMatchObject({ name: 'Vault', shared: false, active: true })
+    // Events carry no duration — that lives on the class-event pairing.
+    expect('duration' in created.body.event).toBe(false)
     const id = created.body.event.id
 
     const list = await request(app).get('/api/events').set('Cookie', cookie)
@@ -38,9 +35,9 @@ describe('events CRUD', () => {
     const updated = await request(app)
       .put(`/api/events/${id}`)
       .set('Cookie', cookie)
-      .send({ name: 'Vault', duration: 15, shared: true, active: false })
+      .send({ name: 'Vault', shared: true, active: false })
       .expect(200)
-    expect(updated.body.event).toMatchObject({ duration: 15, shared: true, active: false })
+    expect(updated.body.event).toMatchObject({ shared: true, active: false })
 
     await request(app).delete(`/api/events/${id}`).set('Cookie', cookie).expect(204)
     const after = await request(app).get('/api/events').set('Cookie', cookie)
@@ -118,20 +115,15 @@ describe('events CRUD', () => {
     expect(exclusive.body.event.shared).toBe(false)
   })
 
-  it('validates duration and name', async () => {
+  it('requires a name', async () => {
     await request(app).post('/api/events').set('Cookie', cookie).send({ name: '' }).expect(400)
-    // Below the 5-minute floor.
-    await request(app)
+    // A duration on an event is ignored, not an error — events have none.
+    const res = await request(app)
       .post('/api/events')
       .set('Cookie', cookie)
-      .send({ name: 'Vault', duration: 0 })
-      .expect(400)
-    // Off the 5-minute axis.
-    await request(app)
-      .post('/api/events')
-      .set('Cookie', cookie)
-      .send({ name: 'Vault', duration: 12 })
-      .expect(400)
+      .send({ name: 'Vault', duration: 10 })
+      .expect(201)
+    expect('duration' in res.body.event).toBe(false)
   })
 
   it('404s on a missing event', async () => {
@@ -156,7 +148,7 @@ describe('events CRUD', () => {
       await request(app)
         .post('/api/classes')
         .set('Cookie', cookie)
-        .send({ name: 'Level 3', eligibleEventIds: [event.id] })
+        .send({ name: 'Level 3', eligibleEvents: [{ eventId: event.id, minutes: 10 }] })
     ).body.class
 
     await request(app).delete(`/api/events/${event.id}`).set('Cookie', cookie).expect(204)
@@ -165,7 +157,7 @@ describe('events CRUD', () => {
     expect(coaches.body.coaches.find((c: { id: number }) => c.id === coach.id).specialties).toEqual([])
     const classes = await request(app).get('/api/classes').set('Cookie', cookie)
     expect(
-      classes.body.classes.find((c: { id: number }) => c.id === cls.id).eligibleEventIds,
+      classes.body.classes.find((c: { id: number }) => c.id === cls.id).eligibleEvents,
     ).toEqual([])
   })
 })
@@ -228,7 +220,11 @@ describe('classes CRUD', () => {
       .send({
         name: 'Xcel Silver',
         priority: 2,
-        eligibleEventIds: [e1, e2, e3],
+        eligibleEvents: [
+          { eventId: e1, minutes: 10 },
+          { eventId: e2, minutes: 15 },
+          { eventId: e3, minutes: 20 },
+        ],
         periodMinutes: 60,
         warmupEventId: warm,
         warmupMinutes: 10,
@@ -237,7 +233,11 @@ describe('classes CRUD', () => {
       })
       .expect(201)
     expect(created.body.class).toMatchObject({
-      eligibleEventIds: [e1, e2, e3],
+      eligibleEvents: [
+        { eventId: e1, minutes: 10 },
+        { eventId: e2, minutes: 15 },
+        { eventId: e3, minutes: 20 },
+      ],
       periodMinutes: 60,
       warmupEventId: warm,
       warmupMinutes: 10,

@@ -21,23 +21,31 @@ import { mulberry32, shuffled } from './rng.ts'
 import { generateSchedule } from './solver.ts'
 import type { AdjacencyPenalty, SolverBlock, SolverCoach, SolverPlacementResult } from './types.ts'
 
-/** An event in the facility catalog, as the plan sees it. */
+/** An event in the facility catalog, as the plan sees it. Events have no
+ *  duration of their own — the class carries it (see PlanClass.eligibleEvents). */
 export interface PlanEvent {
   id: number
   name: string
-  /** Minutes a class spends here per visit. */
-  duration: number
   /** Shared events hold any number of classes at once; exclusive ones, one. */
   shared: boolean
   active: boolean
+}
+
+/** An event this class may rotate through, and the minutes it spends there. */
+export interface PlanEligibleEvent {
+  eventId: number
+  minutes: number
 }
 
 export interface PlanClass {
   id: number
   name: string
   priority: number
-  /** Events this class may rotate through; a subset is drawn each week. */
-  eligibleEventIds: number[]
+  /**
+   * Events this class may rotate through, each with its per-class duration;
+   * a subset is drawn each week.
+   */
+  eligibleEvents: PlanEligibleEvent[]
   periodMinutes: number
   warmupEventId: number | null
   warmupMinutes: number
@@ -215,21 +223,24 @@ function chooseSubsets(
   rand: () => number,
 ): number[][] {
   const middle = cls.periodMinutes - cls.warmupMinutes - cls.cooldownMinutes
-  const eligible = cls.eligibleEventIds.filter((id) => {
-    const e = eventById.get(id)
-    return e !== undefined && e.active && e.duration <= middle
+  // Only events that exist, are active, and fit the middle time on their own.
+  const eligible = cls.eligibleEvents.filter((e) => {
+    const ev = eventById.get(e.eventId)
+    return ev !== undefined && ev.active && e.minutes <= middle
   })
-  const visits = new Map(eligible.map((id) => [id, 0]))
+  const minutesOf = new Map(eligible.map((e) => [e.eventId, e.minutes]))
+  const ids = eligible.map((e) => e.eventId)
+  const visits = new Map(ids.map((id) => [id, 0]))
   const result: number[][] = []
 
   for (let w = 0; w < weeks; w++) {
     // Shuffle first so ties among equally-visited events break deterministically
     // but differently across seeds; then stable-sort by visits ascending.
-    const ordered = shuffled(eligible, rand).sort((a, b) => visits.get(a)! - visits.get(b)!)
+    const ordered = shuffled(ids, rand).sort((a, b) => visits.get(a)! - visits.get(b)!)
     let used = 0
     const chosen: number[] = []
     for (const id of ordered) {
-      const duration = eventById.get(id)!.duration
+      const duration = minutesOf.get(id)!
       if (used + duration <= middle && visits.get(id)! < COVERAGE_TARGET_CAP) {
         chosen.push(id)
         used += duration
@@ -267,8 +278,6 @@ function solveWeek(
     middle.set(p.id, [...(subsets.get(p.classId)?.[week - 1] ?? [])])
   }
 
-  const durationOf = new Map(input.events.map((e) => [e.id, e.duration]))
-
   const buildInput = () => ({
     events: solverEvents,
     coaches: input.coaches,
@@ -289,8 +298,9 @@ function solveWeek(
         required.push({ eventId: cls.warmupEventId, duration: cls.warmupMinutes, position: 'FIRST' })
       }
       for (const eventId of middle.get(p.id) ?? []) {
-        const duration = durationOf.get(eventId) ?? 0
-        if (duration > 0) required.push({ eventId, duration, position: 'ANY' })
+        // Duration is per class-event, from this class's eligible list.
+        const minutes = cls.eligibleEvents.find((e) => e.eventId === eventId)?.minutes ?? 0
+        if (minutes > 0) required.push({ eventId, duration: minutes, position: 'ANY' })
       }
       if (cls.cooldownEventId !== null && cls.cooldownMinutes > 0) {
         required.push({ eventId: cls.cooldownEventId, duration: cls.cooldownMinutes, position: 'LAST' })
@@ -356,7 +366,7 @@ function tallyCoverage(
   // classId → eventId → visits
   const counts = new Map<number, Map<number, number>>()
   for (const cls of classById.values()) {
-    counts.set(cls.id, new Map(cls.eligibleEventIds.map((id) => [id, 0])))
+    counts.set(cls.id, new Map(cls.eligibleEvents.map((e) => [e.eventId, 0])))
   }
   for (const week of weeks) {
     for (const pr of week.placements) {
@@ -373,9 +383,9 @@ function tallyCoverage(
 
   return [...classById.values()].map((cls): ClassCoverage => {
     const byEvent = counts.get(cls.id)!
-    const events: EventCoverage[] = cls.eligibleEventIds.map((eventId) => {
-      const visits = byEvent.get(eventId) ?? 0
-      return { eventId, visits, short: visits < floor }
+    const events: EventCoverage[] = cls.eligibleEvents.map((e) => {
+      const visits = byEvent.get(e.eventId) ?? 0
+      return { eventId: e.eventId, visits, short: visits < floor }
     })
     return { classId: cls.id, events }
   })

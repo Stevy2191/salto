@@ -18,7 +18,6 @@ interface EventRow {
   name: string
   /** Kept in sync with `shared` (shared → NULL, exclusive → 1) for the solver. */
   capacity: number | null
-  duration_minutes: number
   shared: number
   active: number
   color: string
@@ -61,7 +60,6 @@ interface ProgramRow {
 const toEvent = (r: EventRow): GymEvent => ({
   id: r.id,
   name: r.name,
-  duration: r.duration_minutes,
   shared: r.shared === 1,
   active: r.active === 1,
   color: r.color,
@@ -83,7 +81,7 @@ const toClass = (r: ClassRow): GymClass => ({
   priority: r.priority,
   daysOfWeek: JSON.parse(r.days_of_week) as number[],
   startTime: r.start_time,
-  eligibleEventIds: JSON.parse(r.eligible_events) as number[],
+  eligibleEvents: JSON.parse(r.eligible_events) as GymClass['eligibleEvents'],
   periodMinutes: r.period_minutes,
   warmupEventId: r.warmup_event_id,
   warmupMinutes: r.warmup_minutes,
@@ -138,7 +136,6 @@ function parseProgram(body: unknown): {
 
 function parseEvent(body: unknown): {
   name: string
-  duration: number
   shared: boolean
   active: boolean
   color?: string
@@ -151,13 +148,8 @@ function parseEvent(body: unknown): {
     }
     color = obj.color.toUpperCase()
   }
-  const duration = obj.duration === undefined ? 10 : reqInt(obj.duration, 'duration', 5, 8 * 60)
-  if (duration % SLOT_MINUTES !== 0) {
-    throw new ApiError(400, `duration must be a multiple of ${SLOT_MINUTES} minutes`)
-  }
   return {
     name: reqString(obj.name, 'name'),
-    duration,
     shared: obj.shared === undefined ? false : reqBool(obj.shared, 'shared'),
     active: obj.active === undefined ? true : reqBool(obj.active, 'active'),
     color,
@@ -208,13 +200,30 @@ function optBlock(
 
 const MAX_ID = Number.MAX_SAFE_INTEGER
 
+function parseEligibleEvents(value: unknown): { eventId: number; minutes: number }[] {
+  if (value === undefined) return []
+  if (!Array.isArray(value)) throw new ApiError(400, 'eligibleEvents must be an array')
+  const seen = new Set<number>()
+  return value.map((raw) => {
+    const obj = asObject(raw)
+    const eventId = reqInt(obj.eventId, 'eligibleEvents.eventId', 1, MAX_ID)
+    if (seen.has(eventId)) throw new ApiError(400, 'eligibleEvents lists the same event twice')
+    seen.add(eventId)
+    const minutes = reqInt(obj.minutes, 'eligibleEvents.minutes', SLOT_MINUTES, 8 * 60)
+    if (minutes % SLOT_MINUTES !== 0) {
+      throw new ApiError(400, `eligibleEvents minutes must be a multiple of ${SLOT_MINUTES}`)
+    }
+    return { eventId, minutes }
+  })
+}
+
 function parseClass(body: unknown): {
   name: string
   programId: number | null
   priority: number
   daysOfWeek: number[]
   startTime: string | null
-  eligibleEventIds: number[]
+  eligibleEvents: { eventId: number; minutes: number }[]
   periodMinutes: number
   warmupEventId: number | null
   warmupMinutes: number
@@ -228,7 +237,7 @@ function parseClass(body: unknown): {
     throw new ApiError(400, 'daysOfWeek must be 0 (Sunday) through 6 (Saturday)')
   }
   const startTime = optTime(obj.startTime, 'startTime')
-  const eligibleEventIds = intArray(obj.eligibleEventIds, 'eligibleEventIds')
+  const eligibleEvents = parseEligibleEvents(obj.eligibleEvents)
   const periodMinutes = obj.periodMinutes === undefined ? 45 : reqInt(obj.periodMinutes, 'periodMinutes', 5, 12 * 60)
   if (periodMinutes % SLOT_MINUTES !== 0) {
     throw new ApiError(400, `periodMinutes must be a multiple of ${SLOT_MINUTES} minutes`)
@@ -247,7 +256,7 @@ function parseClass(body: unknown): {
     priority: obj.priority === undefined ? 0 : reqInt(obj.priority, 'priority', 0, 100),
     daysOfWeek: [...new Set(daysOfWeek)].sort((a, b) => a - b),
     startTime,
-    eligibleEventIds,
+    eligibleEvents,
     periodMinutes,
     warmupEventId: warmup.eventId,
     warmupMinutes: warmup.minutes,
@@ -259,6 +268,23 @@ function parseClass(body: unknown): {
 
 function requireRow(row: unknown, what: string): void {
   if (!row) throw new ApiError(404, `${what} not found`)
+}
+
+/** Drop a deleted event from every class's eligible-events list of objects. */
+function scrubEligibleEvent(db: DatabaseSync, eventId: number): void {
+  const rows = db.prepare('SELECT id, eligible_events AS col FROM groups').all() as {
+    id: number
+    col: string
+  }[]
+  for (const row of rows) {
+    const eligible = JSON.parse(row.col) as { eventId: number; minutes: number }[]
+    if (eligible.some((e) => e.eventId === eventId)) {
+      db.prepare('UPDATE groups SET eligible_events = ? WHERE id = ?').run(
+        JSON.stringify(eligible.filter((e) => e.eventId !== eventId)),
+        row.id,
+      )
+    }
+  }
 }
 
 /** Remove an id from a JSON int-array column on every row of a table. */
@@ -296,11 +322,10 @@ export function entityRoutes(db: DatabaseSync): Router {
     const e = parseEvent(req.body)
     const result = db
       .prepare(
-        'INSERT INTO events (name, duration_minutes, shared, capacity, active, color) VALUES (?, ?, ?, ?, ?, ?)',
+        'INSERT INTO events (name, shared, capacity, active, color) VALUES (?, ?, ?, ?, ?)',
       )
       .run(
         e.name,
-        e.duration,
         e.shared ? 1 : 0,
         capacityFor(e.shared),
         e.active ? 1 : 0,
@@ -318,10 +343,9 @@ export function entityRoutes(db: DatabaseSync): Router {
       | undefined
     requireRow(existing, 'event')
     db.prepare(
-      'UPDATE events SET name = ?, duration_minutes = ?, shared = ?, capacity = ?, active = ?, color = ? WHERE id = ?',
+      'UPDATE events SET name = ?, shared = ?, capacity = ?, active = ?, color = ? WHERE id = ?',
     ).run(
       e.name,
-      e.duration,
       e.shared ? 1 : 0,
       capacityFor(e.shared),
       e.active ? 1 : 0,
@@ -341,7 +365,7 @@ export function entityRoutes(db: DatabaseSync): Router {
       // cascade.
       db.prepare('DELETE FROM events WHERE id = ?').run(id)
       scrubIdFromJsonColumn(db, 'coaches', 'specialties', id)
-      scrubIdFromJsonColumn(db, 'groups', 'eligible_events', id)
+      scrubEligibleEvent(db, id)
     })
     res.status(204).end()
   })
@@ -458,7 +482,7 @@ export function entityRoutes(db: DatabaseSync): Router {
         c.priority,
         JSON.stringify(c.daysOfWeek),
         c.startTime,
-        JSON.stringify(c.eligibleEventIds),
+        JSON.stringify(c.eligibleEvents),
         c.periodMinutes,
         c.warmupEventId,
         c.warmupMinutes,
@@ -488,7 +512,7 @@ export function entityRoutes(db: DatabaseSync): Router {
       c.priority,
       JSON.stringify(c.daysOfWeek),
       c.startTime,
-      JSON.stringify(c.eligibleEventIds),
+      JSON.stringify(c.eligibleEvents),
       c.periodMinutes,
       c.warmupEventId,
       c.warmupMinutes,
