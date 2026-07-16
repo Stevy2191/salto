@@ -16,11 +16,16 @@ import {
   Select,
   TextInput,
 } from '../components/ui.tsx'
+import { SetupProgress } from '../components/SetupProgress.tsx'
 
 export interface ClassFormValues {
   name: string
   programId: number | null
   priority: number
+  /** Weekdays this class meets (0 = Sunday … 6 = Saturday). */
+  daysOfWeek: number[]
+  /** "HH:MM" 24h start time, or "" when not scheduled yet. */
+  startTime: string
   /** The subset of events this class may be scheduled onto. */
   eligibleEventIds: number[]
   /** Whole period length in minutes; a multiple of SLOT_MINUTES. */
@@ -32,6 +37,38 @@ export interface ClassFormValues {
   cooldownEventId: number | null
   cooldownMinutes: number
   assignedCoaches: number[]
+}
+
+const DAY_INITIALS = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
+const DAY_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+
+/** Toggle which weekdays a class meets. */
+function DayPicker({ value, onChange }: { value: number[]; onChange: (days: number[]) => void }) {
+  const toggle = (day: number) =>
+    onChange(value.includes(day) ? value.filter((d) => d !== day) : [...value, day].sort((a, b) => a - b))
+  return (
+    <div className="flex gap-1">
+      {DAY_INITIALS.map((initial, day) => {
+        const on = value.includes(day)
+        return (
+          <button
+            key={day}
+            type="button"
+            aria-label={DAY_FULL[day]}
+            aria-pressed={on}
+            onClick={() => toggle(day)}
+            className={`size-10 rounded-full text-sm font-semibold ring-1 transition-colors ${
+              on
+                ? 'bg-indigo-600 text-white ring-indigo-600'
+                : 'bg-slate-100 text-slate-600 ring-slate-300 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300 dark:ring-slate-600 dark:hover:bg-slate-600'
+            }`}
+          >
+            {initial}
+          </button>
+        )
+      })}
+    </div>
+  )
 }
 
 /** An optional warm-up/cool-down anchor: pick an event and a length, or none. */
@@ -149,6 +186,7 @@ export function ClassForm({
   events,
   coaches,
   programs,
+  others = [],
   onSave,
   onCancel,
 }: {
@@ -156,6 +194,8 @@ export function ClassForm({
   events: GymEvent[]
   coaches: Coach[]
   programs: Program[]
+  /** Other classes, for the "copy setup from" shortcut. */
+  others?: GymClass[]
   onSave: (values: ClassFormValues) => Promise<void>
   onCancel?: () => void
 }) {
@@ -164,6 +204,8 @@ export function ClassForm({
   // so freezing programs[0] here would leave the select permanently unset.
   const [programId, setProgramId] = useState<number | ''>(initial.programId ?? '')
   const [priority, setPriority] = useState(String(initial.priority))
+  const [daysOfWeek, setDaysOfWeek] = useState(initial.daysOfWeek)
+  const [startTime, setStartTime] = useState(initial.startTime)
   const [eligibleEventIds, setEligibleEventIds] = useState(initial.eligibleEventIds)
   const [periodMinutes, setPeriodMinutes] = useState(String(initial.periodMinutes))
   const [warmupEventId, setWarmupEventId] = useState<number | ''>(initial.warmupEventId ?? '')
@@ -174,6 +216,21 @@ export function ClassForm({
   const [error, setError] = useState<string | null>(null)
 
   const chosenProgramId: number | '' = programId === '' ? (programs[0]?.id ?? '') : programId
+
+  /** Copy another class's whole setup (everything but its name) into the form. */
+  const copyFrom = (source: GymClass) => {
+    setProgramId(source.programId ?? '')
+    setPriority(String(source.priority))
+    setDaysOfWeek(source.daysOfWeek)
+    setStartTime(source.startTime ?? '')
+    setEligibleEventIds(source.eligibleEventIds)
+    setPeriodMinutes(String(source.periodMinutes))
+    setWarmupEventId(source.warmupEventId ?? '')
+    setWarmupMinutes(String(source.warmupMinutes))
+    setCooldownEventId(source.cooldownEventId ?? '')
+    setCooldownMinutes(String(source.cooldownMinutes))
+    setAssignedCoaches(source.assignedCoaches)
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault()
@@ -193,6 +250,8 @@ export function ClassForm({
         name,
         programId: chosenProgramId === '' ? null : chosenProgramId,
         priority: Number(priority),
+        daysOfWeek,
+        startTime,
         eligibleEventIds,
         periodMinutes: period,
         warmupEventId: warmupEventId === '' ? null : warmupEventId,
@@ -203,6 +262,8 @@ export function ClassForm({
       })
       setName(initial.name)
       setPriority(String(initial.priority))
+      setDaysOfWeek(initial.daysOfWeek)
+      setStartTime(initial.startTime)
       setEligibleEventIds(initial.eligibleEventIds)
       setPeriodMinutes(String(initial.periodMinutes))
       setWarmupEventId(initial.warmupEventId ?? '')
@@ -219,6 +280,30 @@ export function ClassForm({
   return (
     <form onSubmit={submit} className="space-y-3">
       <ErrorNote message={error} />
+      {others.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm text-slate-500 dark:text-slate-400">Copy setup from</span>
+          <Select
+            aria-label="copy setup from"
+            value=""
+            onChange={(e) => {
+              const source = others.find((c) => c.id === Number(e.target.value))
+              if (source) copyFrom(source)
+            }}
+            className="max-w-56"
+          >
+            <option value="">another class…</option>
+            {others.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </Select>
+          <span className="text-xs text-slate-400 dark:text-slate-500">
+            fills in everything but the name
+          </span>
+        </div>
+      )}
       <div className="grid gap-3 sm:grid-cols-[1fr_10rem_7rem_7rem]">
         <Field label="Class name">
           <TextInput
@@ -263,6 +348,28 @@ export function ClassForm({
           />
         </Field>
       </div>
+      <div className="grid gap-3 sm:grid-cols-[1fr_10rem] sm:items-end">
+        <FieldGroup label="Meets on">
+          <DayPicker value={daysOfWeek} onChange={setDaysOfWeek} />
+        </FieldGroup>
+        <Field label="Start time">
+          <TextInput
+            type="time"
+            step={SLOT_MINUTES * 60}
+            value={startTime}
+            onChange={(e) => setStartTime(e.target.value)}
+            aria-label="start time"
+          />
+        </Field>
+      </div>
+      {daysOfWeek.length > 0 && startTime && (
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          This class joins the{' '}
+          {daysOfWeek.map((d) => DAY_FULL[d]).join(', ')} {startTime} session
+          {daysOfWeek.length === 1 ? '' : 's'} — generate {daysOfWeek.length === 1 ? 'it' : 'them'} on
+          the Sessions page.
+        </p>
+      )}
       <FieldGroup label="Warm-up and cool-down (optional anchors)">
         <div className="grid gap-3 sm:grid-cols-2">
           <AnchorEditor
@@ -360,7 +467,12 @@ export function ClassesPage() {
     const coachNames = cls.assignedCoaches
       .map((id) => coaches.find((c) => c.id === id)?.name)
       .filter(Boolean)
+    const schedule =
+      cls.daysOfWeek.length > 0 && cls.startTime
+        ? `${cls.daysOfWeek.map((d) => DAY_FULL[d]!.slice(0, 3)).join('/')} ${cls.startTime}`
+        : 'no day/time set'
     return [
+      schedule,
       `${cls.periodMinutes} min period`,
       warmup ? `warm-up ${warmup} ${cls.warmupMinutes}′` : null,
       cooldown ? `cool-down ${cooldown} ${cls.cooldownMinutes}′` : null,
@@ -375,6 +487,8 @@ export function ClassesPage() {
     name: '',
     programId: null,
     priority: 0,
+    daysOfWeek: [],
+    startTime: '',
     eligibleEventIds: [],
     periodMinutes: 45,
     warmupEventId: null,
@@ -397,6 +511,7 @@ export function ClassesPage() {
   return (
     <div className="space-y-4">
       <PageHeader title="Classes" />
+      <SetupProgress page="classes" />
       <ErrorNote
         message={
           classesLoad.error ??
@@ -426,6 +541,7 @@ export function ClassesPage() {
           events={events}
           coaches={coaches}
           programs={programs}
+          others={classes}
           onSave={async (values) => {
             await apiPost('/api/classes', values)
             await classesLoad.reload()
@@ -456,10 +572,11 @@ export function ClassesPage() {
               editingId === cls.id ? (
                 <li key={cls.id} className="py-3">
                   <ClassForm
-                    initial={cls}
+                    initial={{ ...cls, startTime: cls.startTime ?? '' }}
                     events={events}
                     coaches={coaches}
                     programs={programs}
+                    others={classes.filter((c) => c.id !== cls.id)}
                     onCancel={() => setEditingId(null)}
                     onSave={async (values) => {
                       await apiPut(`/api/classes/${cls.id}`, values)

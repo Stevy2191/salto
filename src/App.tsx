@@ -12,8 +12,8 @@ import { SessionsPage } from './pages/SessionsPage.tsx'
 import { SchedulePage } from './pages/SchedulePage.tsx'
 import { PrintPage } from './pages/PrintPage.tsx'
 
-// Remount the schedule editor when the session id changes (e.g. after
-// "Copy session" navigates to the copy) so all loaders refetch.
+// Remount the schedule editor when the session id changes so all loaders
+// refetch for the new slot.
 function KeyedSchedulePage() {
   const { id } = useParams()
   return <SchedulePage key={id} />

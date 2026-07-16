@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { Coach, GymClass, GymEvent, Session } from '../../shared/types.ts'
-import { formatDateLong } from '../../shared/dates.ts'
 import { apiDelete, apiGet, apiPost } from '../lib/api.ts'
 import { useLoad } from '../lib/useLoad.ts'
 import { Button, Card, EmptyNote, ErrorNote, PageHeader } from '../components/ui.tsx'
 import { sessionLabel } from '../lib/sessions.ts'
+import { SetupProgress } from '../components/SetupProgress.tsx'
 
 interface Overview {
   events: GymEvent[]
@@ -38,24 +38,24 @@ function Welcome({ onLoadExample, busy }: { onLoadExample: () => void; busy: boo
     <Card>
       <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">Welcome to Salto 👋</h2>
       <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-        Add your{' '}
+        Enter your{' '}
         <Link className="font-medium text-indigo-600 dark:text-indigo-400" to="/events">
           events
+        </Link>{' '}
+        and{' '}
+        <Link className="font-medium text-indigo-600 dark:text-indigo-400" to="/programs">
+          programs
         </Link>
-        ,{' '}
+        , then add your{' '}
         <Link className="font-medium text-indigo-600 dark:text-indigo-400" to="/classes">
           classes
         </Link>{' '}
-        and{' '}
-        <Link className="font-medium text-indigo-600 dark:text-indigo-400" to="/coaches">
-          coaches
-        </Link>
-        , then create a{' '}
+        with their day, time and events — your{' '}
         <Link className="font-medium text-indigo-600 dark:text-indigo-400" to="/sessions">
-          session
+          sessions
         </Link>{' '}
-        and build its schedule. Or load a fictional example gym to explore first — you can remove
-        it again with one click.
+        group themselves from that, ready to generate. Or load a fictional example gym to explore
+        first — you can remove it again with one click.
       </p>
       <div className="mt-3 flex flex-wrap gap-2">
         <Button onClick={onLoadExample} disabled={busy}>
@@ -116,6 +116,7 @@ export function Dashboard() {
     <div className="space-y-4">
       <PageHeader title="Your sessions" />
       <ErrorNote message={error ?? actionError} />
+      {!isEmpty && <SetupProgress />}
       {data.exampleLoaded && (
         <div className="flex flex-wrap items-center gap-3 rounded-xl bg-amber-50 p-4 ring-1 ring-amber-200 dark:bg-amber-950 dark:ring-amber-800">
           <p className="flex-1 text-sm text-amber-800 dark:text-amber-200">
@@ -133,11 +134,11 @@ export function Dashboard() {
         <Card>
           {data.sessions.length === 0 && (
             <EmptyNote>
-              No sessions yet —{' '}
-              <Link className="font-medium text-indigo-600 dark:text-indigo-400" to="/sessions">
-                create one
+              No sessions yet — add a class with a day and start time on the{' '}
+              <Link className="font-medium text-indigo-600 dark:text-indigo-400" to="/classes">
+                Classes
               </Link>{' '}
-              to start building a schedule.
+              page and its slot appears here.
             </EmptyNote>
           )}
           <ul className="divide-y divide-slate-100 dark:divide-slate-700">
@@ -152,8 +153,8 @@ export function Dashboard() {
                       {sessionLabel(session)}
                     </span>
                     <p className="text-sm text-slate-500 dark:text-slate-400">
-                      {formatDateLong(session.date)} · {session.startTime}–{session.endTime} ·{' '}
-                      {session.classCount} class{session.classCount === 1 ? '' : 'es'}
+                      {session.startTime}–{session.endTime} · {session.classCount} class
+                      {session.classCount === 1 ? '' : 'es'} · repeating 4-week plan
                     </p>
                   </div>
                   <span className="text-sm font-medium text-indigo-600 dark:text-indigo-400">

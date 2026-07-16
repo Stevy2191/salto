@@ -12,6 +12,7 @@ import {
   PageHeader,
   TextInput,
 } from '../components/ui.tsx'
+import { SetupProgress } from '../components/SetupProgress.tsx'
 
 export interface ProgramFormValues {
   name: string
@@ -128,6 +129,7 @@ export function ProgramsPage() {
   return (
     <div className="space-y-4">
       <PageHeader title="Programs" />
+      <SetupProgress page="programs" />
       <p className="text-sm text-slate-600 dark:text-slate-300">
         A program is an offering your gym runs — Preschool, Rec Gym, Team. Classes belong to one,
         and a session can take on a whole program at once.

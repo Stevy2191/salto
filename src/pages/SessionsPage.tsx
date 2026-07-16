@@ -1,231 +1,96 @@
-import { useState } from 'react'
-import type { FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import type { GymClass, Session } from '../../shared/types.ts'
-import { rowCount, SLOT_MINUTES } from '../../shared/slots.ts'
-import { formatDateLong, todayIsoDate } from '../../shared/dates.ts'
-import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api.ts'
+import { Link } from 'react-router-dom'
+import type { GymClass, Program, Session } from '../../shared/types.ts'
+import { apiGet } from '../lib/api.ts'
 import { useLoad } from '../lib/useLoad.ts'
 import { sessionLabel } from '../lib/sessions.ts'
-import { CopySessionDialog } from '../components/CopySessionDialog.tsx'
-import {
-  Button,
-  Card,
-  ChipPicker,
-  EmptyNote,
-  ErrorNote,
-  Field,
-  FieldGroup,
-  PageHeader,
-  TextInput,
-} from '../components/ui.tsx'
+import { Card, EmptyNote, ErrorNote, PageHeader } from '../components/ui.tsx'
+import { SetupProgress } from '../components/SetupProgress.tsx'
 
-export interface SessionFormValues {
-  name: string
-  /** "YYYY-MM-DD" — the specific day this practice happens. */
-  date: string
-  /** The session's master window — the grid's time axis. */
-  startTime: string
-  endTime: string
-  /** Only used when creating: each class gets its own full-window column. */
-  classes?: number[]
-}
-
-export function SessionForm({
-  initial,
-  classes,
-  onSave,
-  onCancel,
-}: {
-  initial: SessionFormValues
-  classes: GymClass[]
-  onSave: (values: SessionFormValues) => Promise<void>
-  onCancel?: () => void
-}) {
-  const [values, setValues] = useState(initial)
-  const [error, setError] = useState<string | null>(null)
-
-  function set<K extends keyof SessionFormValues>(key: K, value: SessionFormValues[K]) {
-    setValues((v) => ({ ...v, [key]: value }))
-  }
-
-  async function submit(e: FormEvent) {
-    e.preventDefault()
-    try {
-      await onSave(values)
-      setValues(initial)
-      setError(null)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'save failed')
-    }
-  }
-
-  return (
-    <form onSubmit={submit} className="space-y-3">
-      <ErrorNote message={error} />
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Session name (optional)">
-          <TextInput
-            value={values.name}
-            onChange={(e) => set('name', e.target.value)}
-            placeholder="e.g. Monday Team Practice"
-          />
-        </Field>
-        <Field label="Date" hint={values.date ? formatDateLong(values.date) : undefined}>
-          <TextInput
-            type="date"
-            value={values.date}
-            onChange={(e) => set('date', e.target.value)}
-            required
-          />
-        </Field>
-        <Field label="Starts">
-          <TextInput
-            type="time"
-            value={values.startTime}
-            onChange={(e) => set('startTime', e.target.value)}
-            required
-          />
-        </Field>
-        <Field label="Ends">
-          <TextInput
-            type="time"
-            value={values.endTime}
-            onChange={(e) => set('endTime', e.target.value)}
-            required
-          />
-        </Field>
-      </div>
-      {/* Only when creating: once a session exists, its classes live in the
-          grid, where they have columns and windows of their own. */}
-      {values.classes !== undefined && (
-        <FieldGroup label="Classes to start with (each gets its own column)">
-          <ChipPicker
-            options={classes.map((c) => ({ id: c.id, label: c.name }))}
-            selected={values.classes}
-            onChange={(ids) => set('classes', ids)}
-          />
-        </FieldGroup>
-      )}
-      <div className="flex gap-2">
-        <Button type="submit">Save</Button>
-        {onCancel && (
-          <Button type="button" variant="secondary" onClick={onCancel}>
-            Cancel
-          </Button>
-        )}
-      </div>
-    </form>
-  )
-}
+// Sessions are not created here — they are the weekly (day, start-time) slots
+// Salto derives from the classes. This page is a read-only view of those
+// slots; the way to change one is to change a class's schedule on the Classes
+// page. Each slot links to its repeating 4-week plan.
 
 export function SessionsPage() {
-  const navigate = useNavigate()
   const sessionsLoad = useLoad(() => apiGet<{ sessions: Session[] }>('/api/sessions'))
   const classesLoad = useLoad(() => apiGet<{ classes: GymClass[] }>('/api/classes'))
-  const [editingId, setEditingId] = useState<number | null>(null)
-  const [copying, setCopying] = useState<Session | null>(null)
-  const [actionError, setActionError] = useState<string | null>(null)
+  const programsLoad = useLoad(() => apiGet<{ programs: Program[] }>('/api/programs'))
 
   const sessions = sessionsLoad.data?.sessions ?? []
   const classes = classesLoad.data?.classes ?? []
+  const programs = programsLoad.data?.programs ?? []
+  const programName = (id: number | null) =>
+    id === null ? null : programs.find((p) => p.id === id)?.name
 
-  async function remove(session: Session) {
-    if (!confirm(`Delete "${sessionLabel(session)}" and its schedule?`)) return
-    try {
-      await apiDelete(`/api/sessions/${session.id}`)
-      setActionError(null)
-      await sessionsLoad.reload()
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'delete failed')
-    }
-  }
-
-  const emptyForm: SessionFormValues = {
-    name: '',
-    date: todayIsoDate(),
-    startTime: '16:00',
-    endTime: '18:00',
-    classes: [],
-  }
+  // Which classes fall in a slot: those meeting its day at its start time.
+  const classesIn = (session: Session) =>
+    classes.filter(
+      (c) => c.startTime === session.startTime && c.daysOfWeek.includes(session.dayOfWeek),
+    )
 
   return (
     <div className="space-y-4">
       <PageHeader title="Sessions" />
-      <ErrorNote message={sessionsLoad.error ?? classesLoad.error ?? actionError} />
+      <SetupProgress page="sessions" />
+      <ErrorNote message={sessionsLoad.error ?? classesLoad.error ?? programsLoad.error} />
       <Card>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-          Add session
-        </h2>
-        <SessionForm
-          initial={emptyForm}
-          classes={classes}
-          onSave={async (values) => {
-            await apiPost('/api/sessions', values)
-            await sessionsLoad.reload()
-          }}
-        />
+        <p className="text-sm text-slate-600 dark:text-slate-300">
+          Sessions are grouped automatically from your classes' schedules — each day and start time
+          your classes meet becomes a slot below. To add or change one, edit a class on the{' '}
+          <Link className="font-medium text-indigo-600 dark:text-indigo-400" to="/classes">
+            Classes
+          </Link>{' '}
+          page.
+        </p>
       </Card>
       <Card>
-        {sessions.length === 0 && <EmptyNote>No sessions yet.</EmptyNote>}
+        {sessions.length === 0 && (
+          <EmptyNote>
+            No slots yet — give a class a day and start time on the{' '}
+            <Link className="font-medium text-indigo-600 dark:text-indigo-400" to="/classes">
+              Classes
+            </Link>{' '}
+            page and its slot appears here.
+          </EmptyNote>
+        )}
         <ul className="divide-y divide-slate-100 dark:divide-slate-700">
-          {sessions.map((session) =>
-            editingId === session.id ? (
-              <li key={session.id} className="py-3">
-                <SessionForm
-                  initial={session}
-                  classes={classes}
-                  onCancel={() => setEditingId(null)}
-                  onSave={async (values) => {
-                    await apiPut(`/api/sessions/${session.id}`, values)
-                    setEditingId(null)
-                    await sessionsLoad.reload()
-                  }}
-                />
-              </li>
-            ) : (
+          {sessions.map((session) => {
+            const inSlot = classesIn(session)
+            return (
               <li key={session.id} className="flex flex-wrap items-center gap-2 py-3">
                 <div className="flex-1">
-                  <span className="font-medium text-slate-900 dark:text-slate-100">{sessionLabel(session)}</span>
+                  <span className="font-medium text-slate-900 dark:text-slate-100">
+                    {sessionLabel(session)}
+                  </span>
                   {session.isSample && (
                     <span className="ml-2 rounded bg-amber-100 dark:bg-amber-900 px-1.5 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-200">
                       sample
                     </span>
                   )}
                   <p className="text-sm text-slate-500 dark:text-slate-400">
-                    {formatDateLong(session.date)} · {session.startTime}–{session.endTime} ·{' '}
-                    {rowCount(session)} rows of {SLOT_MINUTES} min · {session.columnCount} column
-                    {session.columnCount === 1 ? '' : 's'} · {session.classCount} class
-                    {session.classCount === 1 ? '' : 'es'}
+                    {session.startTime}–{session.endTime} · {session.classCount} class
+                    {session.classCount === 1 ? '' : 'es'} · repeating 4-week plan
+                  </p>
+                  <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-300">
+                    {inSlot
+                      .map((c) => {
+                        const prog = programName(c.programId)
+                        return prog ? `${c.name} (${prog})` : c.name
+                      })
+                      .join(', ')}
                   </p>
                 </div>
                 <Link
                   to={`/sessions/${session.id}/schedule`}
                   className="min-h-11 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500"
                 >
-                  Schedule
+                  Generate / view plan
                 </Link>
-                <Button variant="secondary" onClick={() => setCopying(session)}>
-                  Copy
-                </Button>
-                <Button variant="secondary" onClick={() => setEditingId(session.id)}>
-                  Edit
-                </Button>
-                <Button variant="danger" onClick={() => void remove(session)}>
-                  Delete
-                </Button>
               </li>
-            ),
-          )}
+            )
+          })}
         </ul>
       </Card>
-      {copying && (
-        <CopySessionDialog
-          session={copying}
-          onClose={() => setCopying(null)}
-          onCopied={(newId) => navigate(`/sessions/${newId}/schedule`)}
-        />
-      )}
     </div>
   )
 }

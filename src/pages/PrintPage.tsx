@@ -3,7 +3,6 @@ import type { Coach, GymClass, GymEvent, Placement, Schedule, Session } from '..
 import { PLAN_WEEKS } from '../../shared/types.ts'
 import { formatRange, formatTime, rowCount, rowLabel, sessionWindow } from '../../shared/slots.ts'
 import { textColorFor } from '../../shared/colors.ts'
-import { formatDateLong } from '../../shared/dates.ts'
 import { apiGet } from '../lib/api.ts'
 import { useLoad } from '../lib/useLoad.ts'
 import { Button, ErrorNote } from '../components/ui.tsx'
@@ -100,7 +99,7 @@ export function PrintPage() {
       <div className="overflow-x-auto bg-white p-6 text-black shadow-sm dark:shadow-none print:overflow-visible print:p-0 print:shadow-none">
         <h1 className="text-2xl font-black text-black">{sessionLabel(session)}</h1>
         <p className="text-sm font-medium text-slate-700 print:text-black">
-          {formatDateLong(session.date)} · {formatRange(startMin, endMin)} · {PLAN_WEEKS}-week plan
+          {formatRange(startMin, endMin)} · repeating {PLAN_WEEKS}-week plan
         </p>
 
         {weeks.map((schedule, i) => (

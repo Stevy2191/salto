@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import type {
   ClassCoverage,
   Coach,
   GymClass,
   GymEvent,
-  Program,
   Schedule,
   Session,
   Settings,
@@ -18,7 +17,6 @@ import {
   rowLabel,
   sessionWindow,
 } from '../../shared/slots.ts'
-import { formatDateLong } from '../../shared/dates.ts'
 import { textColorFor } from '../../shared/colors.ts'
 import { apiGet, apiPut } from '../lib/api.ts'
 import { useLoad } from '../lib/useLoad.ts'
@@ -29,29 +27,20 @@ import {
 } from '../lib/conflicts.ts'
 import { sessionLabel } from '../lib/sessions.ts'
 import {
-  addPlacement,
   blockBounds,
   eraseSpan,
   moveBlock,
-  movePlacement,
   moveTarget,
   paintSpan,
   removeBlock,
-  removeColumn,
-  removePlacement,
   resizeBlock,
-  resizePlacement,
-  swapColumns,
   toggleBlockLock,
 } from '../lib/paint.ts'
 import { generatePlan } from '../solver/plan.ts'
 import type { PlanPlacement } from '../solver/plan.ts'
 import { describeRepairChanges, repairSchedule } from '../solver/repair.ts'
 import { Button, Card, ChipPicker, ErrorNote, FieldGroup } from '../components/ui.tsx'
-import { CopySessionDialog } from '../components/CopySessionDialog.tsx'
 import { ROW_H, laneBackground, laneHeight, minToY, spanHeight, yToMin } from './schedule/grid.ts'
-import { AddClassDialog, PlacementDialog } from './schedule/dialogs.tsx'
-import { Attending } from './schedule/Attending.tsx'
 
 type SaveState = 'saved' | 'saving' | 'error'
 
@@ -99,7 +88,6 @@ interface Pointer {
 export function SchedulePage() {
   const params = useParams()
   const sessionId = Number(params.id)
-  const navigate = useNavigate()
 
   const sessionLoad = useLoad(() => apiGet<{ session: Session }>(`/api/sessions/${sessionId}`))
   const eventsLoad = useLoad(() => apiGet<{ events: GymEvent[] }>('/api/events'))
@@ -112,7 +100,6 @@ export function SchedulePage() {
   const scheduleLoad = useLoad(() =>
     apiGet<{ schedule: Schedule }>(`/api/sessions/${sessionId}/schedule?week=${weekRef.current}`),
   )
-  const programsLoad = useLoad(() => apiGet<{ programs: Program[] }>('/api/programs'))
   const settingsLoad = useLoad(() => apiGet<{ settings: Settings }>('/api/settings'))
 
   const [schedule, setSchedule] = useState<Schedule | null>(null)
@@ -126,10 +113,6 @@ export function SchedulePage() {
   const [repairSummary, setRepairSummary] = useState<string[] | null>(null)
   const [coverage, setCoverage] = useState<ClassCoverage[] | null>(null)
   const [generating, setGenerating] = useState(false)
-  const [copyOpen, setCopyOpen] = useState(false)
-  const [addingTo, setAddingTo] = useState<number | null>(null)
-  const [editingPlacement, setEditingPlacement] = useState<number | null>(null)
-  const [gathering, setGathering] = useState(false)
 
   useEffect(() => {
     if (scheduleLoad.data) setSchedule(scheduleLoad.data.schedule)
@@ -148,7 +131,6 @@ export function SchedulePage() {
   const events = eventsLoad.data?.events ?? []
   const classes = classesLoad.data?.classes ?? []
   const coaches = coachesLoad.data?.coaches ?? []
-  const programs = programsLoad.data?.programs ?? []
   const activeEvents = useMemo(() => events.filter((e) => e.active), [events])
 
   // Default the brush to the first event so painting is one click away.
@@ -184,38 +166,6 @@ export function SchedulePage() {
     },
     [sessionId],
   )
-
-  /**
-   * Set who is in this session. The server gives each class its window and
-   * packs the lanes; classes already here keep whatever was edited.
-   */
-  const setAttending = async (classIds: number[]) => {
-    setGathering(true)
-    try {
-      const res = await apiPut<{ schedule: Schedule }>(`/api/sessions/${sessionId}/classes`, {
-        classIds,
-      })
-      setSchedule(res.schedule)
-      setSaveError(null)
-      await sessionLoad.reload()
-    } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'could not set the classes')
-    } finally {
-      setGathering(false)
-    }
-  }
-
-  const setColumns = async (next: number) => {
-    const previous = columnCount
-    setColumnCount(next)
-    try {
-      await apiPut(`/api/sessions/${sessionId}/columns`, { columnCount: next })
-      setSaveError(null)
-    } catch (err) {
-      setColumnCount(previous)
-      setSaveError(err instanceof Error ? err.message : 'could not change columns')
-    }
-  }
 
   // --- Dragging. The gesture lives on window so it survives leaving the
   // lane, and the live drag stays in state so the grid previews it without a
@@ -323,7 +273,6 @@ export function SchedulePage() {
     classesLoad.error ??
     coachesLoad.error ??
     scheduleLoad.error ??
-    programsLoad.error ??
     settingsLoad.error
   if (loadError) return <ErrorNote message={loadError} />
   if (!session || !schedule || !conflicts) return null
@@ -337,22 +286,6 @@ export function SchedulePage() {
 
   const apply = (next: Schedule | null) => {
     if (next) void persist(next, schedule)
-  }
-
-  /**
-   * Remove a lane. Only an empty one — a column holding a class is a real
-   * thing someone built, so say so rather than silently deleting the work.
-   * The remaining lanes shift left before the count drops, so the save never
-   * references a column that no longer exists.
-   */
-  const dropColumn = async (columnIndex: number) => {
-    if (schedule.placements.some((p) => p.columnIndex === columnIndex)) {
-      setSaveError('That column still holds a class — move or remove it first.')
-      return
-    }
-    setSaveError(null)
-    await persist(removeColumn(schedule, columnIndex), schedule)
-    await setColumns(columnCount - 1)
   }
 
   // --- Day-of outages ---
@@ -704,8 +637,7 @@ export function SchedulePage() {
             {sessionLabel(session)}
           </h1>
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            {formatDateLong(session.date)} · {formatRange(startMin, endMin)} · {rows} rows of{' '}
-            {SLOT_MINUTES} min
+            {formatRange(startMin, endMin)} · repeats weekly · {rows} rows of {SLOT_MINUTES} min
             {conflicts.count > 0 && (
               <span className="ml-2 font-medium text-red-600 dark:text-red-400">
                 ⚠ {conflicts.count} conflict{conflicts.count === 1 ? '' : 's'}
@@ -719,9 +651,6 @@ export function SchedulePage() {
           >
             {saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? 'Saved' : 'Save failed'}
           </span>
-          <Button variant="secondary" onClick={() => setCopyOpen(true)}>
-            Copy session
-          </Button>
           <Link
             to={`/sessions/${sessionId}/print`}
             className="min-h-11 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-slate-700 ring-1 ring-slate-300 hover:bg-slate-50 dark:bg-slate-700 dark:text-slate-200 dark:ring-slate-600 dark:hover:bg-slate-600"
@@ -740,25 +669,9 @@ export function SchedulePage() {
 
       <ErrorNote message={saveError} />
 
-      {/* Step 1: who is in this session. */}
-      <div className="rounded-xl bg-white p-4 ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700">
-        <h2 className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
-          Classes attending
-          <span className="ml-2 font-normal text-slate-500 dark:text-slate-400">
-            all run the same clock — the whole session window, every week
-          </span>
-        </h2>
-        <Attending
-          programs={programs}
-          classes={classes}
-          schedule={schedule}
-          busy={gathering}
-          onChange={(ids) => void setAttending(ids)}
-        />
-      </div>
-
-      {/* Step 2: generate the four-week plan. This is how a plan is made; the
-          palette below is for touching up what comes out, week by week. */}
+      {/* Generate the four-week plan. This slot's classes are already in it
+          (derived from their schedules); this palette below is for touching up
+          what comes out, week by week. */}
       <div className="flex flex-wrap items-center gap-3 rounded-xl bg-indigo-50 p-4 ring-1 ring-indigo-200 dark:bg-indigo-950 dark:ring-indigo-800">
         <Button
           onClick={() => void generatePlanNow()}
@@ -779,7 +692,7 @@ export function SchedulePage() {
         )}
         <p className="flex-1 text-sm text-indigo-900 dark:text-indigo-100">
           {schedule.placements.length === 0
-            ? 'Add the classes attending, then generate their four-week rotation.'
+            ? 'This slot has no classes yet — give a class this day and start time on the Classes page.'
             : 'Draws each class a fitting subset of its eligible events every week, spreading coverage so each is attended at least twice. Re-randomize re-rolls; locked weeks (🔒) and locked blocks are kept.'}
         </p>
       </div>
@@ -875,9 +788,6 @@ export function SchedulePage() {
         <span className="ml-auto text-xs text-slate-500 dark:text-slate-400">
           Drag empty rows to paint · drag a block to move it · drag its edge to resize
         </span>
-        <Button variant="secondary" onClick={() => void setColumns(columnCount + 1)}>
-          + Add column
-        </Button>
         </div>
       </details>
 
@@ -972,12 +882,12 @@ export function SchedulePage() {
       {columnCount === 0 ? (
         <Card>
           <p className="text-sm text-slate-600 dark:text-slate-300">
-            This session has no columns yet. A column is a lane that can hold one class at a time —
-            add one, then place a class into it for its own time window.
+            No classes meet in this slot yet. Give a class this day and start time on the{' '}
+            <Link className="font-medium text-indigo-600 dark:text-indigo-400" to="/classes">
+              Classes
+            </Link>{' '}
+            page and it appears here as a lane.
           </p>
-          <div className="mt-3">
-            <Button onClick={() => void setColumns(1)}>+ Add the first column</Button>
-          </div>
         </Card>
       ) : (
         <div className="overflow-auto rounded-xl bg-white ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700">
@@ -999,42 +909,11 @@ export function SchedulePage() {
                   key={c}
                   className="sticky top-0 z-20 border-b border-r border-slate-200 bg-slate-100 p-2 dark:border-slate-700 dark:bg-slate-700"
                 >
-                  <div className="flex items-center gap-1">
-                    <span className="flex-1 truncate text-xs font-semibold text-slate-600 dark:text-slate-300">
-                      {inLane.length > 0
-                        ? inLane.map((p) => classById.get(p.classId)?.name ?? '?').join(' → ')
-                        : `Column ${c + 1}`}
-                    </span>
-                    <button
-                      onClick={() => apply(swapColumns(schedule, c, c - 1))}
-                      disabled={c === 0}
-                      aria-label={`move column ${c + 1} left`}
-                      className="rounded px-1 text-slate-500 hover:bg-slate-200 disabled:opacity-30 dark:text-slate-400 dark:hover:bg-slate-600"
-                    >
-                      ‹
-                    </button>
-                    <button
-                      onClick={() => apply(swapColumns(schedule, c, c + 1))}
-                      disabled={c === columnCount - 1}
-                      aria-label={`move column ${c + 1} right`}
-                      className="rounded px-1 text-slate-500 hover:bg-slate-200 disabled:opacity-30 dark:text-slate-400 dark:hover:bg-slate-600"
-                    >
-                      ›
-                    </button>
-                    <button
-                      onClick={() => void dropColumn(c)}
-                      aria-label={`remove column ${c + 1}`}
-                      className="rounded px-1 text-slate-400 hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-950"
-                    >
-                      ×
-                    </button>
-                  </div>
-                  <button
-                    onClick={() => setAddingTo(c)}
-                    className="mt-1 w-full rounded bg-white px-2 py-1 text-xs font-medium text-indigo-600 ring-1 ring-slate-300 hover:bg-indigo-50 dark:bg-slate-800 dark:text-indigo-400 dark:ring-slate-600 dark:hover:bg-slate-700"
-                  >
-                    + Add class
-                  </button>
+                  <span className="block truncate text-xs font-semibold text-slate-600 dark:text-slate-300">
+                    {inLane.length > 0
+                      ? inLane.map((p) => classById.get(p.classId)?.name ?? '?').join(' → ')
+                      : `Column ${c + 1}`}
+                  </span>
                 </div>
               )
             })}
@@ -1238,11 +1117,9 @@ export function SchedulePage() {
                             not steal the top resize handle of a block that
                             starts at the class's own start. */}
                         <div className="pointer-events-none absolute left-0 right-0 top-0 z-[5] flex">
-                          <button
-                            data-gesture
-                            onClick={() => setEditingPlacement(p.id)}
-                            title={`${cls?.name ?? 'Unknown class'} ${formatRange(p.startMin, p.endMin)} — click to edit`}
-                            className={`pointer-events-auto max-w-full truncate px-1 text-left text-[10px] font-bold leading-tight ring-1 ring-black/20 ${
+                          <span
+                            title={`${cls?.name ?? 'Unknown class'} ${formatRange(p.startMin, p.endMin)}`}
+                            className={`max-w-full truncate px-1 text-left text-[10px] font-bold leading-tight ring-1 ring-black/20 ${
                               placementConflicts
                                 ? 'bg-red-200 text-red-900'
                                 : 'bg-amber-100/95 text-amber-950'
@@ -1253,7 +1130,7 @@ export function SchedulePage() {
                             <span className="font-normal opacity-80">
                               {formatRange(p.startMin, p.endMin)}
                             </span>
-                          </button>
+                          </span>
                         </div>
 
                         {/* Live preview: the span a stroke would write… */}
@@ -1310,68 +1187,6 @@ export function SchedulePage() {
         </div>
       )}
 
-      {columnCount > 0 && schedule.placements.length === 0 && (
-        <p className="text-sm text-slate-500 dark:text-slate-400">
-          No classes placed yet — use <span className="font-semibold">+ Add class</span> on a column
-          to give a class its own time window, then paint events down its rows.
-        </p>
-      )}
-
-      {copyOpen && (
-        <CopySessionDialog
-          session={session}
-          onClose={() => setCopyOpen(false)}
-          onCopied={(newId) => navigate(`/sessions/${newId}/schedule`)}
-        />
-      )}
-      {addingTo !== null && (
-        <AddClassDialog
-          session={session}
-          classes={classes}
-          columnIndex={addingTo}
-          onClose={() => setAddingTo(null)}
-          onAdd={(classId, from, to) => {
-            const next = addPlacement(schedule, classId, addingTo, from, to)
-            // The dialog says why; it has the user's attention and the
-            // fields they'd need to change. Repeating it on the page behind
-            // would just be the same sentence twice.
-            if (!next) return false
-            apply(next)
-            setAddingTo(null)
-            return true
-          }}
-        />
-      )}
-      {editingPlacement !== null &&
-        (() => {
-          const p = schedule.placements.find((x) => x.id === editingPlacement)
-          if (!p) return null
-          return (
-            <PlacementDialog
-              session={session}
-              placement={p}
-              className={classById.get(p.classId)?.name ?? 'Unknown class'}
-              columnCount={columnCount}
-              onClose={() => setEditingPlacement(null)}
-              onRemove={() => {
-                apply(removePlacement(schedule, p.id))
-                setEditingPlacement(null)
-              }}
-              onSave={(from, to, columnIndex) => {
-                let next: Schedule | null = schedule
-                if (columnIndex !== p.columnIndex) {
-                  next = movePlacement(next, p.id, columnIndex)
-                  if (!next) return 'That column is already busy at those times.'
-                }
-                next = resizePlacement(next, p.id, from, to)
-                if (!next) return 'That window collides with another class in the column.'
-                apply(next)
-                setEditingPlacement(null)
-                return null
-              }}
-            />
-          )
-        })()}
     </div>
   )
 }

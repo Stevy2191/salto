@@ -2,12 +2,14 @@ import { NavLink, Navigate, Outlet } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext.tsx'
 import { ThemeToggle } from './ThemeToggle.tsx'
 
+// Ordered to match the build flow: set up Events → Programs → Classes, then
+// Sessions is the payoff view; Coaches is last (not yet part of generation).
 const links = [
   { to: '/', label: 'Home' },
-  { to: '/sessions', label: 'Sessions' },
   { to: '/events', label: 'Events' },
   { to: '/programs', label: 'Programs' },
   { to: '/classes', label: 'Classes' },
+  { to: '/sessions', label: 'Sessions' },
   { to: '/coaches', label: 'Coaches' },
 ]
 

@@ -5,6 +5,7 @@ import { EVENT_PALETTE } from '../../shared/colors.ts'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api.ts'
 import { useLoad } from '../lib/useLoad.ts'
 import { Button, Card, EmptyNote, ErrorNote, Field, FieldGroup, PageHeader, TextInput } from '../components/ui.tsx'
+import { SetupProgress } from '../components/SetupProgress.tsx'
 
 export interface EventFormValues {
   name: string
@@ -189,6 +190,7 @@ export function EventsPage() {
   return (
     <div className="space-y-4">
       <PageHeader title="Events" />
+      <SetupProgress page="events" />
       <ErrorNote message={error ?? actionError} />
       <Card>
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
