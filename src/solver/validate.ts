@@ -103,6 +103,34 @@ export function hardConstraintViolations(
     }
   }
 
+  // 7. Position anchors hold, checked by comparing every pair rather than
+  // trusting the order the solver placed them in.
+  for (const p of input.placements) {
+    const cls = classById.get(p.classId)
+    if (!cls) continue
+    const anchorOf = new Map(cls.requiredEvents.map((r) => [r.eventId, r.position]))
+    const blocks = result.find((r) => r.placementId === p.id)?.blocks ?? []
+    for (const a of blocks) {
+      for (const b of blocks) {
+        if (a === b) continue
+        const posA = anchorOf.get(a.eventId) ?? 'ANY'
+        const posB = anchorOf.get(b.eventId) ?? 'ANY'
+        // A FIRST block may never start after a non-FIRST one.
+        if (posA === 'FIRST' && posB !== 'FIRST' && a.startMin >= b.endMin) {
+          violations.push(
+            `placement ${p.id}: FIRST event ${a.eventId} runs after ${posB} event ${b.eventId}`,
+          )
+        }
+        // A LAST block may never end before a non-LAST one.
+        if (posA === 'LAST' && posB !== 'LAST' && a.endMin <= b.startMin) {
+          violations.push(
+            `placement ${p.id}: LAST event ${a.eventId} runs before ${posB} event ${b.eventId}`,
+          )
+        }
+      }
+    }
+  }
+
   // Locked blocks survive untouched.
   for (const p of input.placements) {
     const blocks = result.find((r) => r.placementId === p.id)?.blocks ?? []

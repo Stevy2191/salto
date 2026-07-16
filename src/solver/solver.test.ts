@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { generateSchedule } from './solver.ts'
 import { hardConstraintViolations } from './validate.ts'
-import type { SolverBlock, SolverInput, SolverPlacement } from './types.ts'
+import type { EventPosition, SolverBlock, SolverInput, SolverPlacement } from './types.ts'
 
 const T = (hhmm: string) => {
   const [h, m] = hhmm.split(':').map(Number)
@@ -31,10 +31,16 @@ const event = (id: number, name: string, capacity: number | null = 1, active = t
 const cls = (
   id: number,
   name: string,
-  requiredEvents: { eventId: number; duration: number }[],
+  requiredEvents: { eventId: number; duration: number; position?: EventPosition }[],
   priority = 0,
   assignedCoaches: number[] = [],
-) => ({ id, name, priority, requiredEvents, assignedCoaches })
+) => ({
+  id,
+  name,
+  priority,
+  requiredEvents: requiredEvents.map((r) => ({ position: 'ANY' as const, ...r })),
+  assignedCoaches,
+})
 
 /** A class in a column for a window; defaults to a 2-hour 16:00 window. */
 const place = (
@@ -124,7 +130,7 @@ describe('class windows', () => {
     )
     // The complaint is about Silver's window, not the session.
     expect(result.reasons.join(' ')).toContain('Silver')
-    expect(result.reasons.join(' ')).toMatch(/40 min .* 30-min .*window/)
+    expect(result.reasons.join(' ')).toMatch(/40 min on Vault but its window is only 30 min/)
   })
 
   it('explains total required time exceeding the window', () => {
@@ -140,7 +146,7 @@ describe('class windows', () => {
         placements: [place(1, 1, '16:00', '17:00')],
       }),
     )
-    expect(result.reasons.join(' ')).toMatch(/Silver has 75 min of required events .* 60-min/)
+    expect(result.reasons.join(' ')).toMatch(/Silver needs 75 min of events but its window is only 60 min/)
   })
 
   it('fits two classes with different windows on one capacity-1 event', () => {
@@ -168,7 +174,141 @@ describe('class windows', () => {
         placements: [place(1, 1, '16:00', '17:00'), place(2, 2, '16:00', '17:00')],
       }),
     )
-    expect(result.reasons.join(' ')).toContain('overbooked')
+    expect(result.reasons.join(' ')).toMatch(/Vault is over-subscribed: 2 classes need/)
+  })
+})
+
+describe('position anchors', () => {
+  /** The order a class actually ends up doing its events in. */
+  const orderOf = (r: { placements: { blocks: SolverBlock[] }[] }) =>
+    [...r.placements.flatMap((p) => p.blocks)]
+      .sort((a, b) => a.startMin - b.startMin)
+      .map((b) => b.eventId)
+
+  it('puts a FIRST event before everything else', () => {
+    const input = makeInput({
+      events: [event(1, 'Warm-up', null), event(2, 'Vault'), event(3, 'Beam')],
+      classes: [
+        cls(1, 'Tiny Tot 1', [
+          { eventId: 2, duration: 15 },
+          { eventId: 3, duration: 15 },
+          { eventId: 1, duration: 15, position: 'FIRST' },
+        ]),
+      ],
+      placements: [place(1, 1)],
+    })
+    expect(orderOf(expectOk(input))[0]).toBe(1)
+  })
+
+  it('puts a LAST event after everything else', () => {
+    const input = makeInput({
+      events: [event(1, 'Vault'), event(2, 'Beam'), event(3, 'Cool-down', null)],
+      classes: [
+        cls(1, 'Tiny Tot 1', [
+          { eventId: 3, duration: 15, position: 'LAST' },
+          { eventId: 1, duration: 15 },
+          { eventId: 2, duration: 15 },
+        ]),
+      ],
+      placements: [place(1, 1)],
+    })
+    const order = orderOf(expectOk(input))
+    expect(order[order.length - 1]).toBe(3)
+  })
+
+  it('honours a warm-up and a cool-down at once', () => {
+    const input = makeInput({
+      events: [event(1, 'Warm-up', null), event(2, 'Vault'), event(3, 'Beam'), event(4, 'Stretch', null)],
+      classes: [
+        cls(1, 'Rec Gym 1', [
+          { eventId: 2, duration: 10 },
+          { eventId: 1, duration: 10, position: 'FIRST' },
+          { eventId: 4, duration: 10, position: 'LAST' },
+          { eventId: 3, duration: 10 },
+        ]),
+      ],
+      placements: [place(1, 1)],
+    })
+    const order = orderOf(expectOk(input))
+    expect(order[0]).toBe(1)
+    expect(order[order.length - 1]).toBe(4)
+  })
+
+  it('runs several FIRST events before the rest, in whatever order fits', () => {
+    const input = makeInput({
+      events: [event(1, 'Warm-up', null), event(2, 'Stretch', null), event(3, 'Vault')],
+      classes: [
+        cls(1, 'A', [
+          { eventId: 3, duration: 15 },
+          { eventId: 1, duration: 10, position: 'FIRST' },
+          { eventId: 2, duration: 10, position: 'FIRST' },
+        ]),
+      ],
+      placements: [place(1, 1)],
+    })
+    const order = orderOf(expectOk(input))
+    // Both anchors lead; Vault is last of the three.
+    expect(order.slice(0, 2).sort()).toEqual([1, 2])
+    expect(order[2]).toBe(3)
+  })
+
+  it('anchors hold even when the anchored event is contended', () => {
+    // Three classes all warm up on the one Tumble Trak: they must queue for
+    // it, but each still does it before its own other events.
+    const input = makeInput({
+      events: [event(1, 'Tumble Trak'), event(2, 'Floor', null)],
+      classes: [1, 2, 3].map((i) =>
+        cls(i, `C${i}`, [
+          { eventId: 2, duration: 15 },
+          { eventId: 1, duration: 15, position: 'FIRST' },
+        ]),
+      ),
+      placements: [place(1, 1), place(2, 2), place(3, 3)],
+    })
+    const result = expectOk(input)
+    for (const p of result.placements) {
+      const ordered = [...p.blocks].sort((a, b) => a.startMin - b.startMin)
+      expect(ordered[0]!.eventId).toBe(1)
+    }
+    // And the contended Trak never holds two classes at once — which is
+    // only possible because an anchor fixes the order, not the clock.
+    const trak = result.placements
+      .flatMap((p) => p.blocks)
+      .filter((b) => b.eventId === 1)
+      .sort((a, b) => a.startMin - b.startMin)
+    for (let i = 1; i < trak.length; i++) {
+      expect(trak[i]!.startMin).toBeGreaterThanOrEqual(trak[i - 1]!.endMin)
+    }
+  })
+
+  it('explains an over-subscribed shared event by naming the classes', () => {
+    const result = expectFail(
+      makeInput({
+        events: [event(1, 'Tumble Trak')],
+        classes: [1, 2, 3, 4, 5].map((i) => cls(i, `C${i}`, [{ eventId: 1, duration: 30 }])),
+        placements: [1, 2, 3, 4, 5].map((i) => place(i, i, '16:00', '17:00')),
+      }),
+    )
+    expect(result.reasons.join(' ')).toMatch(
+      /Tumble Trak is over-subscribed: 5 classes need 150 min on it between 16:00–17:00, which only fits 60 min/,
+    )
+  })
+
+  it('keeps a locked warm-up leading, and plans the rest after it', () => {
+    const input = makeInput({
+      events: [event(1, 'Warm-up', null), event(2, 'Vault')],
+      classes: [
+        cls(1, 'A', [
+          { eventId: 1, duration: 15, position: 'FIRST' },
+          { eventId: 2, duration: 15 },
+        ]),
+      ],
+      placements: [place(1, 1, '16:00', '17:00', [block(1, '16:20', '16:35')])],
+    })
+    const result = expectOk(input)
+    const vault = allBlocks(result).find((b) => b.eventId === 2)!
+    // Vault waits for the hand-placed warm-up rather than jumping ahead.
+    expect(vault.startMin).toBeGreaterThanOrEqual(T('16:35'))
   })
 })
 

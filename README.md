@@ -15,17 +15,18 @@ Salto is a general-purpose product: every gym defines its own events/stations, e
 All three phases below are implemented — **v1 is feature-complete**.
 
 **Phase 1 — Setup & manual grid**
-- CRUD for events, coaches, classes, and sessions
+- CRUD for **programs**, events, coaches, classes, and sessions — you enter your gym's structure once
 - A one-click (and one-click-removable) fictional example gym to explore before entering your own
-- The schedule grid: classes as columns, time as 5-minute rows. Each column is a *lane* that can run several classes back to back (LV 1 → LV 2 → VYC 2), each with its own time window inside the session — so a class is never forced to fill the whole evening
-- Build it by **dragging**: pick an event and drag down a class's empty rows to paint it, drag a block's body to move it, drag its edge to resize. A live tooltip says what the drag will do; a move that would collide is refused rather than eating your work. No setup required
+- A class belongs to a **program** and defines what it does: each event it attends, how long it spends there (per class, not global), and whether that event must come **first** (warm-up), **last** (cool-down) or anywhere
+- The schedule grid: classes as columns, time as 5-minute rows. Each column is a *lane* that can run several classes back to back, each on its own time window — so a class is never forced to fill the whole evening
+- Hand-editing for cleanup: drag a block's body to move it, its edge to resize, paint into empty rows, erase. A live tooltip says what the drag will do; a move that would collide is refused rather than eating your work
 - Conflict highlighting: overlapping classes in a lane, a double-booked coach, an over-capacity event
 - Data persistence
 - Dockerfile + docker-compose.yml working end to end
 - First-run admin account creation + login
 
-**Phase 2 — Auto-generation** (optional; painting is the primary path)
-- Generate a conflict-free schedule with the constraint solver, filling each class's own window
+**Phase 2 — Auto-generation** (the primary path)
+- Add a session's classes by program or individually, hit **Generate**, and get a complete conflict-free rotation: every class visits all its events for their full durations inside its own window, warm-ups first and cool-downs last, and no two classes ever share an apparatus at the same moment
 - Clear reporting of unmet constraints when generation fails
 - "Shuffle" — regenerate with a different seed for alternative layouts
 - Lock cells and regenerate around them
@@ -41,7 +42,7 @@ All three phases below are implemented — **v1 is feature-complete**.
 
 Scheduling is treated as a constraint-satisfaction problem over time slots of the session's rotation length.
 
-Hard constraints (never violated): event capacity is respected, each class and each coach is in exactly one place at a time, every class completes all required events with their full durations inside **that class's own window**, and inactive events are never used.
+Hard constraints (never violated): event capacity is respected — events are shared facility-wide, so two classes are never on the same apparatus at once — each class and each coach is in exactly one place at a time, every class completes all required events with their full durations inside **that class's own window**, position anchors hold (warm-ups first, cool-downs last), and inactive events are never used.
 
 Soft constraints (optimized in priority order): higher-priority classes get their layout first, idle time is minimized, configurable adjacency penalties avoid back-to-back high-intensity events, and coaches stay with their class (or event, depending on gym mode).
 

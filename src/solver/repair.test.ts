@@ -35,8 +35,8 @@ function baseInput(overrides: Partial<RepairInput> = {}): RepairInput {
         name: 'Level 3 Girls',
         priority: 0,
         requiredEvents: [
-          { eventId: 1, duration: 30 },
-          { eventId: 2, duration: 30 },
+          { eventId: 1, duration: 30, position: 'ANY' as const },
+          { eventId: 2, duration: 30, position: 'ANY' as const },
         ],
         assignedCoaches: [7],
       },
@@ -45,8 +45,8 @@ function baseInput(overrides: Partial<RepairInput> = {}): RepairInput {
         name: 'Boys Team',
         priority: 0,
         requiredEvents: [
-          { eventId: 1, duration: 30 },
-          { eventId: 2, duration: 30 },
+          { eventId: 1, duration: 30, position: 'ANY' as const },
+          { eventId: 2, duration: 30, position: 'ANY' as const },
         ],
         assignedCoaches: [8],
       },
@@ -248,7 +248,7 @@ describe('repair: filling gaps', () => {
           id: 1,
           name: 'Silver',
           priority: 0,
-          requiredEvents: [{ eventId: 1, duration: 40 }],
+          requiredEvents: [{ eventId: 1, duration: 40, position: 'ANY' as const }],
           assignedCoaches: [],
         },
       ],
@@ -260,6 +260,6 @@ describe('repair: filling gaps', () => {
     expect(result.ok).toBe(false)
     if (result.ok) throw new Error('unreachable')
     expect(result.reasons.join(' ')).toMatch(/Silver/)
-    expect(result.reasons.join(' ')).toMatch(/30-min/)
+    expect(result.reasons.join(' ')).toMatch(/window is only 30 min/)
   })
 })

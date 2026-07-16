@@ -3,12 +3,14 @@
 // src/solver/.
 //
 // The solver fills events inside each *placement* — a class in a column for
-// its own window — not across the whole session. Generation is secondary to
-// hand-painting, so it only ever deals in whole blocks the same shape the
-// grid stores.
-import type { AdjacencyPenalty, CoachMode } from '../../shared/types.ts'
+// its own window — not across the whole session. Generation is the primary
+// way a schedule is created, from the structure the gym entered: programs,
+// their classes, and each class's events with per-class durations and
+// position anchors. It deals only in whole blocks, the same shape the grid
+// stores, so generated and hand-edited work are the same thing.
+import type { AdjacencyPenalty, CoachMode, EventPosition } from '../../shared/types.ts'
 
-export type { AdjacencyPenalty }
+export type { AdjacencyPenalty, EventPosition }
 
 export interface SolverEvent {
   id: number
@@ -22,8 +24,8 @@ export interface SolverClass {
   id: number
   name: string
   priority: number
-  /** Optional: a class with none is simply left alone. */
-  requiredEvents: { eventId: number; duration: number }[]
+  /** The class's structure. A class with none is simply left alone. */
+  requiredEvents: { eventId: number; duration: number; position: EventPosition }[]
   assignedCoaches: number[]
 }
 

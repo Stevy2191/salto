@@ -1,9 +1,10 @@
 // Rotation schedule generator: greedy placement in class-priority order
 // with block-level backtracking, deterministic for a given seed.
 //
-// Generation is the *secondary* path — hand-painting is primary — so this
-// only fills a class's required events inside that class's own window, and
-// leaves everything else exactly as painted.
+// This is the *primary* way a schedule gets made: a gym enters its structure
+// once and generates from it. Each class's required events are filled inside
+// that class's own window, honouring their position anchors, and everything
+// already locked is left exactly as it is.
 //
 // Hard constraints (never violated in an ok result):
 //   1. An event's simultaneous classes never exceed its capacity
@@ -14,6 +15,8 @@
 //   4. Every required event is fulfilled with its full duration.
 //   5. Inactive events are never scheduled.
 //   6. No block escapes its placement's window.
+//   7. Position anchors hold: every FIRST event precedes every ANY and LAST,
+//      and every LAST follows every FIRST and ANY.
 // Soft constraints (heuristic candidate ordering, in priority order):
 //   higher-priority classes place first; minimize idle time inside each
 //   window; avoid configured bad back-to-back event pairs; keep coaches
@@ -21,9 +24,9 @@
 import { SLOT_MINUTES, formatRange } from '../../shared/slots.ts'
 import { mulberry32, shuffled } from './rng.ts'
 import type {
+  EventPosition,
   SolverBlock,
   SolverClass,
-
   SolverEvent,
   SolverInput,
   SolverPlacement,
@@ -44,6 +47,7 @@ interface Need {
   eventId: number
   /** Contiguous slots still to place (locks may cover part of a need). */
   length: number
+  position: EventPosition
 }
 
 interface Placed {
@@ -82,6 +86,13 @@ export function generateSchedule(input: SolverInput): SolverResult {
   }
 
   // What remains to place, after locks are credited against requirements.
+  //
+  // Ordering matters twice over. Across classes, higher priority first.
+  // Within a class, FIRST needs are placed before ANY, and ANY before LAST:
+  // that ordering is what makes the anchors enforceable, because each need
+  // is then only ever bounded below by what is already down (see
+  // earliestSlot). Longest-first inside each group — hardest to fit.
+  const RANK: Record<EventPosition, number> = { FIRST: 0, ANY: 1, LAST: 2 }
   const needs: Need[] = []
   for (const placement of prioritized(input.placements, classById, rand)) {
     const cls = classById.get(placement.classId)
@@ -93,11 +104,45 @@ export function generateSchedule(input: SolverInput): SolverResult {
         .filter((b) => b.eventId === req.eventId)
         .reduce((sum, b) => sum + slotOf(b.endMin) - slotOf(b.startMin), 0)
       const remaining = requiredSlots - lockedSlots
-      if (remaining > 0) perClass.push({ placement, cls, eventId: req.eventId, length: remaining })
+      if (remaining > 0) {
+        perClass.push({
+          placement,
+          cls,
+          eventId: req.eventId,
+          length: remaining,
+          position: req.position,
+        })
+      }
     }
-    // Longest first within a class — hardest to fit.
-    perClass.sort((a, b) => b.length - a.length)
+    perClass.sort((a, b) => RANK[a.position] - RANK[b.position] || b.length - a.length)
     needs.push(...perClass)
+  }
+
+  /**
+   * The earliest slot a need may start at, given its anchor and what its
+   * class already has down. A FIRST need is free (it leads); an ANY need
+   * must clear every FIRST block; a LAST need must clear everything else.
+   * Locked blocks count too — a hand-placed warm-up still leads.
+   */
+  const earliestSlot = (need: Need): number => {
+    const first = slotOf(need.placement.startMin)
+    if (need.position === 'FIRST') return first
+    const anchorOf = new Map(need.cls.requiredEvents.map((r) => [r.eventId, r.position]))
+    const mustClear = (b: { eventId: number; endMin: number }) => {
+      const at = anchorOf.get(b.eventId) ?? 'ANY'
+      return need.position === 'LAST' ? at !== 'LAST' : at === 'FIRST'
+    }
+    let earliest = first
+    for (const b of need.placement.locked) {
+      if (mustClear(b)) earliest = Math.max(earliest, slotOf(b.endMin))
+    }
+    for (const p of placed) {
+      if (p.need.placement.id !== need.placement.id) continue
+      const at = p.need.position
+      const blocks = need.position === 'LAST' ? at !== 'LAST' : at === 'FIRST'
+      if (blocks) earliest = Math.max(earliest, p.startSlot + p.need.length)
+    }
+    return earliest
   }
 
   const adjacencyBad = new Set(
@@ -139,11 +184,13 @@ export function generateSchedule(input: SolverInput): SolverResult {
     const use = eventUse.get(need.eventId)!
     const b = busy.get(need.placement.id)!
     const a = at.get(need.placement.id)!
-    // Candidates live strictly inside the class's own window.
+    // Candidates live strictly inside the class's own window, and no
+    // earlier than the class's anchors allow.
     const first = slotOf(need.placement.startMin)
     const last = slotOf(need.placement.endMin)
+    const from = earliestSlot(need)
     const starts: { start: number; score: number }[] = []
-    outer: for (let start = first; start + need.length <= last; start++) {
+    outer: for (let start = from; start + need.length <= last; start++) {
       for (let s = start; s < start + need.length; s++) {
         if (use[s]! >= capacity || b[s]! === 1) continue outer
       }
@@ -337,7 +384,6 @@ function feasibilityReasons(input: SolverInput): string[] {
     const cls = classById.get(p.classId)
     if (!cls) continue
     const windowSlots = (p.endMin - p.startMin) / SLOT_MINUTES
-    const windowText = `${formatRange(p.startMin, p.endMin)} window`
     const windowMin = p.endMin - p.startMin
     if (windowSlots <= 0) {
       reasons.push(`${cls.name}'s window has no time in it.`)
@@ -363,7 +409,7 @@ function feasibilityReasons(input: SolverInput): string[] {
       }
       if (req.duration > windowMin) {
         reasons.push(
-          `${cls.name} needs ${req.duration} min on ${event.name} but only has a ${windowMin}-min ${windowText}.`,
+          `${cls.name} needs ${req.duration} min on ${event.name} but its window is only ${windowMin} min (${formatRange(p.startMin, p.endMin)}).`,
         )
       }
       demand.set(`${p.id}:${req.eventId}`, req.duration / SLOT_MINUTES)
@@ -378,7 +424,7 @@ function feasibilityReasons(input: SolverInput): string[] {
       : 0
     if (totalSlots + extraLocked > windowSlots) {
       reasons.push(
-        `${cls.name} has ${(totalSlots + extraLocked) * SLOT_MINUTES} min of required events but only a ${windowMin}-min ${windowText}.`,
+        `${cls.name} needs ${(totalSlots + extraLocked) * SLOT_MINUTES} min of events but its window is only ${windowMin} min (${formatRange(p.startMin, p.endMin)}).`,
       )
     }
   }
@@ -397,8 +443,11 @@ function feasibilityReasons(input: SolverInput): string[] {
     const spanEnd = Math.max(...users.map((p) => p.endMin))
     const spanSlots = (spanEnd - spanStart) / SLOT_MINUTES
     if (needed > spanSlots * event.capacity) {
+      // Name the count: a shared apparatus being over-subscribed is the
+      // most common way a gym's structure fails, and "5 classes" is what
+      // makes it actionable.
       reasons.push(
-        `${event.name} is overbooked: classes need ${needed * SLOT_MINUTES} min on it between ${formatRange(spanStart, spanEnd)}, which only fits ${spanSlots * event.capacity * SLOT_MINUTES} min.`,
+        `${event.name} is over-subscribed: ${users.length} class${users.length === 1 ? '' : 'es'} need ${needed * SLOT_MINUTES} min on it between ${formatRange(spanStart, spanEnd)}, which only fits ${spanSlots * event.capacity * SLOT_MINUTES} min.`,
       )
     }
   }

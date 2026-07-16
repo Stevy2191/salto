@@ -3,11 +3,14 @@ import type { DatabaseSync } from 'node:sqlite'
 import type {
   ClassWindow,
   Coach,
+  EventPosition,
   GymClass,
   GymEvent,
+  Program,
   RequiredEvent,
   Session,
 } from '../../shared/types.ts'
+import { EVENT_POSITIONS } from '../../shared/types.ts'
 import { formatTime, isSnapped, parseTime } from '../../shared/slots.ts'
 import { isHexColor, nextPaletteColor } from '../../shared/colors.ts'
 import { isIsoDate } from '../../shared/dates.ts'
@@ -49,9 +52,20 @@ interface CoachRow {
 interface ClassRow {
   id: number
   name: string
+  program_id: number | null
   priority: number
   required_events: string
   assigned_coaches: string
+  default_start_time: string | null
+  default_end_time: string | null
+  is_sample: number
+}
+
+interface ProgramRow {
+  id: number
+  name: string
+  default_start_time: string | null
+  default_end_time: string | null
   is_sample: number
 }
 
@@ -95,11 +109,57 @@ const toCoach = (r: CoachRow): Coach => ({
 const toClass = (r: ClassRow): GymClass => ({
   id: r.id,
   name: r.name,
+  programId: r.program_id,
   priority: r.priority,
   requiredEvents: JSON.parse(r.required_events) as RequiredEvent[],
+  defaultStartTime: r.default_start_time,
+  defaultEndTime: r.default_end_time,
   assignedCoaches: JSON.parse(r.assigned_coaches) as number[],
   isSample: r.is_sample === 1,
 })
+
+const toProgram = (r: ProgramRow): Program => ({
+  id: r.id,
+  name: r.name,
+  defaultStartTime: r.default_start_time,
+  defaultEndTime: r.default_end_time,
+  isSample: r.is_sample === 1,
+})
+
+/** An optional "HH:MM" that must snap to the grid when present. */
+function optTime(value: unknown, field: string): string | null {
+  if (value === undefined || value === null || value === '') return null
+  if (typeof value !== 'string') throw new ApiError(400, `${field} must be a time like 16:00`)
+  const min = parseTime(value)
+  if (min === null) throw new ApiError(400, `${field} must be HH:MM`)
+  if (!isSnapped(min)) throw new ApiError(400, `${field} must land on a 5-minute boundary`)
+  return value
+}
+
+/** A start/end pair is all-or-nothing, and must run forwards. */
+function optWindow(
+  body: Record<string, unknown>,
+  what: string,
+): { start: string | null; end: string | null } {
+  const start = optTime(body.defaultStartTime, 'defaultStartTime')
+  const end = optTime(body.defaultEndTime, 'defaultEndTime')
+  if ((start === null) !== (end === null)) {
+    throw new ApiError(400, `${what} needs both a default start and end time, or neither`)
+  }
+  if (start !== null && end !== null && parseTime(end)! <= parseTime(start)!) {
+    throw new ApiError(400, `${what}'s default end time must be after its start`)
+  }
+  return { start, end }
+}
+
+function parseProgram(body: unknown): {
+  name: string
+  start: string | null
+  end: string | null
+} {
+  const obj = asObject(body)
+  return { name: reqString(obj.name, 'name'), ...optWindow(obj, 'a program') }
+}
 
 const toSession = (r: SessionRow): Session => ({
   id: r.id,
@@ -161,8 +221,11 @@ function parseCoach(body: unknown): { name: string; specialties: number[]; avail
 
 function parseClass(body: unknown): {
   name: string
+  programId: number | null
   priority: number
   requiredEvents: RequiredEvent[]
+  start: string | null
+  end: string | null
   assignedCoaches: number[]
 } {
   const obj = asObject(body)
@@ -174,15 +237,25 @@ function parseClass(body: unknown): {
     if (duration % 5 !== 0) {
       throw new ApiError(400, 'requiredEvents.duration must be a multiple of 5 minutes')
     }
+    const position = e.position ?? 'ANY'
+    if (!EVENT_POSITIONS.includes(position as EventPosition)) {
+      throw new ApiError(400, 'requiredEvents.position must be FIRST, ANY, or LAST')
+    }
     return {
       eventId: reqInt(e.eventId, 'requiredEvents.eventId', 1, Number.MAX_SAFE_INTEGER),
       duration,
+      position: position as EventPosition,
     }
   })
   return {
     name: reqString(obj.name, 'name'),
+    programId:
+      obj.programId === undefined || obj.programId === null
+        ? null
+        : reqInt(obj.programId, 'programId', 1, Number.MAX_SAFE_INTEGER),
     priority: obj.priority === undefined ? 0 : reqInt(obj.priority, 'priority', 0, 100),
     requiredEvents,
+    ...optWindow(obj, 'a class'),
     assignedCoaches: intArray(obj.assignedCoaches, 'assignedCoaches'),
   }
 }
@@ -348,17 +421,81 @@ export function entityRoutes(db: DatabaseSync): Router {
     res.status(204).end()
   })
 
+  // --- Programs ---
+  router.get('/programs', (_req, res) => {
+    const rows = db.prepare('SELECT * FROM programs ORDER BY id').all() as unknown as ProgramRow[]
+    res.json({ programs: rows.map(toProgram) })
+  })
+
+  router.post('/programs', (req, res) => {
+    const p = parseProgram(req.body)
+    const result = db
+      .prepare('INSERT INTO programs (name, default_start_time, default_end_time) VALUES (?, ?, ?)')
+      .run(p.name, p.start, p.end)
+    const row = db
+      .prepare('SELECT * FROM programs WHERE id = ?')
+      .get(result.lastInsertRowid) as unknown as ProgramRow
+    res.status(201).json({ program: toProgram(row) })
+  })
+
+  router.put('/programs/:id', (req, res) => {
+    const id = idParam(req.params.id)
+    const p = parseProgram(req.body)
+    requireRow(db.prepare('SELECT id FROM programs WHERE id = ?').get(id), 'program')
+    db.prepare(
+      'UPDATE programs SET name = ?, default_start_time = ?, default_end_time = ? WHERE id = ?',
+    ).run(p.name, p.start, p.end, id)
+    const row = db.prepare('SELECT * FROM programs WHERE id = ?').get(id) as unknown as ProgramRow
+    res.json({ program: toProgram(row) })
+  })
+
+  // Refused while classes still point at it, rather than orphaning them —
+  // a class without a program cannot be generated from.
+  router.delete('/programs/:id', (req, res) => {
+    const id = idParam(req.params.id)
+    requireRow(db.prepare('SELECT id FROM programs WHERE id = ?').get(id), 'program')
+    const held = db
+      .prepare('SELECT COUNT(*) AS n FROM groups WHERE program_id = ?')
+      .get(id) as { n: number }
+    if (held.n > 0) {
+      throw new ApiError(
+        400,
+        `${held.n} class${held.n === 1 ? '' : 'es'} still belong${held.n === 1 ? 's' : ''} to this program — move or delete them first`,
+      )
+    }
+    db.prepare('DELETE FROM programs WHERE id = ?').run(id)
+    res.status(204).end()
+  })
+
   // --- Classes ---
   router.get('/classes', (_req, res) => {
     const rows = db.prepare('SELECT * FROM groups ORDER BY id').all() as unknown as ClassRow[]
     res.json({ classes: rows.map(toClass) })
   })
 
+  const requireProgram = (programId: number | null) => {
+    if (programId === null) return
+    requireRow(db.prepare('SELECT id FROM programs WHERE id = ?').get(programId), 'program')
+  }
+
   router.post('/classes', (req, res) => {
     const c = parseClass(req.body)
+    requireProgram(c.programId)
     const result = db
-      .prepare('INSERT INTO groups (name, priority, required_events, assigned_coaches) VALUES (?, ?, ?, ?)')
-      .run(c.name, c.priority, JSON.stringify(c.requiredEvents), JSON.stringify(c.assignedCoaches))
+      .prepare(
+        `INSERT INTO groups (name, program_id, priority, required_events, assigned_coaches,
+                             default_start_time, default_end_time)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        c.name,
+        c.programId,
+        c.priority,
+        JSON.stringify(c.requiredEvents),
+        JSON.stringify(c.assignedCoaches),
+        c.start,
+        c.end,
+      )
     const row = db.prepare('SELECT * FROM groups WHERE id = ?').get(result.lastInsertRowid) as unknown as ClassRow
     res.status(201).json({ class: toClass(row) })
   })
@@ -367,9 +504,21 @@ export function entityRoutes(db: DatabaseSync): Router {
     const id = idParam(req.params.id)
     const c = parseClass(req.body)
     requireRow(db.prepare('SELECT id FROM groups WHERE id = ?').get(id), 'class')
+    requireProgram(c.programId)
     db.prepare(
-      'UPDATE groups SET name = ?, priority = ?, required_events = ?, assigned_coaches = ? WHERE id = ?',
-    ).run(c.name, c.priority, JSON.stringify(c.requiredEvents), JSON.stringify(c.assignedCoaches), id)
+      `UPDATE groups SET name = ?, program_id = ?, priority = ?, required_events = ?,
+                         assigned_coaches = ?, default_start_time = ?, default_end_time = ?
+       WHERE id = ?`,
+    ).run(
+      c.name,
+      c.programId,
+      c.priority,
+      JSON.stringify(c.requiredEvents),
+      JSON.stringify(c.assignedCoaches),
+      c.start,
+      c.end,
+      id,
+    )
     const row = db.prepare('SELECT * FROM groups WHERE id = ?').get(id) as unknown as ClassRow
     res.json({ class: toClass(row) })
   })

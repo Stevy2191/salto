@@ -26,19 +26,57 @@ export interface Coach {
   isSample: boolean
 }
 
+/**
+ * Where an event sits in a class's order.
+ * - FIRST: the class starts with it (a warm-up)
+ * - LAST: the class ends with it (a cool-down)
+ * - ANY: free to fall anywhere between
+ *
+ * A position anchors the *order*, not the clock: a warm-up is the first
+ * thing the class does, not something pinned to the minute its window opens.
+ * Pinning would make good schedules impossible as soon as two classes wanted
+ * the same warm-up apparatus — which a shared Tumble Trak causes at once.
+ */
+export type EventPosition = 'FIRST' | 'LAST' | 'ANY'
+
+export const EVENT_POSITIONS: EventPosition[] = ['FIRST', 'ANY', 'LAST']
+
 export interface RequiredEvent {
   eventId: number
-  /** Minutes; a multiple of SLOT_MINUTES. */
+  /** Minutes; a multiple of SLOT_MINUTES. Per class, never global. */
   duration: number
+  position: EventPosition
+}
+
+/**
+ * A facility offering that groups classes: "Preschool", "Rec Gym", "Team".
+ * Its default times are the clock its classes run on unless a class says
+ * otherwise, so a whole program can be staggered against another.
+ */
+export interface Program {
+  id: number
+  name: string
+  /** "HH:MM" 24h, or null to fall back to the session's window. */
+  defaultStartTime: string | null
+  defaultEndTime: string | null
+  isSample: boolean
 }
 
 export interface GymClass {
   id: number
   name: string
+  /** The program it belongs to. */
+  programId: number | null
   /** Higher priority wins when conflicts arise. */
   priority: number
-  /** Optional — only an input to generation. Painting needs no setup. */
+  /** The class's structure, and the main input to generation. */
   requiredEvents: RequiredEvent[]
+  /**
+   * The class's own clock, overriding its program's. A window in a session
+   * resolves to: the class's times, else its program's, else the session's.
+   */
+  defaultStartTime: string | null
+  defaultEndTime: string | null
   /** Coach ids who travel with this class. */
   assignedCoaches: number[]
   isSample: boolean

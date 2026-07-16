@@ -38,7 +38,17 @@ function realisticGym(): SolverInput {
       id: i + 1,
       name: `Team ${i + 1}`,
       priority: 2,
-      requiredEvents: [1, 2, 3, 6].map((eventId) => ({ eventId, duration: 30 })),
+      // A real squad warms up first, rotates the apparatus, and stretches
+      // out last. Note the anchors sit on Conditioning — shared mat space
+      // with no capacity limit. Anchoring a whole program's warm-up onto a
+      // one-at-a-time apparatus would make every squad queue for it before
+      // doing anything else, which is neither realistic nor solvable.
+      requiredEvents: [
+        { eventId: 7, duration: 15, position: 'FIRST' as const },
+        { eventId: 1, duration: 30, position: 'ANY' as const },
+        { eventId: 2, duration: 30, position: 'ANY' as const },
+        { eventId: 3, duration: 30, position: 'ANY' as const },
+      ],
       assignedCoaches: [(i % 6) + 1],
     })),
     // Rec classes: floor, tramp, tumble, conditioning — shared apparatus.
@@ -46,7 +56,12 @@ function realisticGym(): SolverInput {
       id: TEAM + i + 1,
       name: `Rec ${i + 1}`,
       priority: i % 2,
-      requiredEvents: [4, 8, 5, 7].map((eventId) => ({ eventId, duration: 20 })),
+      requiredEvents: [
+        { eventId: 4, duration: 20, position: 'ANY' as const },
+        { eventId: 8, duration: 20, position: 'ANY' as const },
+        { eventId: 5, duration: 20, position: 'ANY' as const },
+        { eventId: 7, duration: 20, position: 'LAST' as const },
+      ],
       assignedCoaches: [(i % 6) + 1],
     })),
   ]

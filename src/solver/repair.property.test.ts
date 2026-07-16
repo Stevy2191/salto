@@ -16,7 +16,11 @@ const arbScenario = fc
     classCount: fc.integer({ min: 1, max: 5 }),
     requirements: fc.array(
       fc.array(
-        fc.record({ eventIndex: fc.nat({ max: 4 }), durationSlots: fc.integer({ min: 1, max: 3 }) }),
+        fc.record({
+          eventIndex: fc.nat({ max: 4 }),
+          durationSlots: fc.integer({ min: 1, max: 3 }),
+          position: fc.constantFrom('FIRST' as const, 'ANY' as const, 'LAST' as const),
+        }),
         { maxLength: 3 },
       ),
       { minLength: 5, maxLength: 5 },
@@ -45,7 +49,11 @@ const arbScenario = fc
     const classes = Array.from({ length: raw.classCount }, (_, g) => {
       const seen = new Set<number>()
       const requiredEvents = raw.requirements[g]!
-        .map((r) => ({ eventId: (r.eventIndex % raw.eventCount) + 1, duration: r.durationSlots * 5 }))
+        .map((r) => ({
+          eventId: (r.eventIndex % raw.eventCount) + 1,
+          duration: r.durationSlots * 5,
+          position: r.position,
+        }))
         .filter((r) => (seen.has(r.eventId) ? false : (seen.add(r.eventId), true)))
       return {
         id: g + 1,

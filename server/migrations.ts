@@ -316,6 +316,64 @@ CREATE INDEX idx_blocks_placement ON event_blocks(placement_id);
       db.exec('ALTER TABLE sessions DROP COLUMN rotation_length')
     },
   },
+  {
+    // The program layer. A gym's structure — programs, their classes, and
+    // each class's events with per-class durations and position anchors —
+    // becomes the input that generation works from, so it needs somewhere
+    // to live.
+    //
+    // Existing classes all land under one "General" program, which is
+    // truthful: a gym that never had programs had exactly one. Existing
+    // required events become position ANY, which is what they meant when
+    // order was unconstrained.
+    name: 'programs',
+    up: (db) => {
+      db.exec(`
+CREATE TABLE programs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  default_start_time TEXT,
+  default_end_time TEXT,
+  is_sample INTEGER NOT NULL DEFAULT 0
+);
+`)
+      // program_id stays nullable: SQLite cannot add a NOT NULL foreign key
+      // to an existing table without a full rebuild, and the API requires a
+      // real program anyway. Deleting a program is refused while it still
+      // has classes, so this never goes null behind the user's back.
+      db.exec('ALTER TABLE groups ADD COLUMN program_id INTEGER REFERENCES programs(id)')
+      db.exec('ALTER TABLE groups ADD COLUMN default_start_time TEXT')
+      db.exec('ALTER TABLE groups ADD COLUMN default_end_time TEXT')
+
+      const classes = db.prepare('SELECT id, required_events FROM groups').all() as {
+        id: number
+        required_events: string
+      }[]
+      if (classes.length > 0) {
+        // Only make the catch-all program if there are classes to put in it;
+        // a fresh database should not start with a phantom program.
+        const programId = Number(
+          db
+            .prepare("INSERT INTO programs (name, is_sample) VALUES ('General', 0)")
+            .run().lastInsertRowid,
+        )
+        db.prepare('UPDATE groups SET program_id = ?').run(programId)
+      }
+
+      const update = db.prepare('UPDATE groups SET required_events = ? WHERE id = ?')
+      for (const row of classes) {
+        const entries = JSON.parse(row.required_events) as {
+          eventId: number
+          duration: number
+          position?: string
+        }[]
+        update.run(
+          JSON.stringify(entries.map((e) => ({ ...e, position: e.position ?? 'ANY' }))),
+          row.id,
+        )
+      }
+    },
+  },
 ]
 
 export function runMigrations(db: DatabaseSync, upTo: number = MIGRATIONS.length): void {

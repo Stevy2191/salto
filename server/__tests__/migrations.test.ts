@@ -236,4 +236,52 @@ describe('migration runner', () => {
     ])
     expect(db.prepare('SELECT COUNT(*) AS n FROM event_blocks').get()).toMatchObject({ n: 1 })
   })
+
+  it('puts existing classes under a General program and defaults events to ANY', () => {
+    const db = new DatabaseSync(':memory:')
+    db.exec('PRAGMA foreign_keys = ON')
+    // A deployment from just before programs existed.
+    runMigrations(db, 7)
+    db.prepare("INSERT INTO events (name, color) VALUES ('Vault', '#4E79A7')").run()
+    db.prepare("INSERT INTO events (name, color) VALUES ('Beam', '#59A14F')").run()
+    db.prepare(
+      `INSERT INTO groups (name, required_events) VALUES
+       ('Level 3', '[{"eventId":1,"duration":30},{"eventId":2,"duration":15}]')`,
+    ).run()
+    db.prepare("INSERT INTO groups (name, required_events) VALUES ('Boys Team', '[]')").run()
+
+    runMigrations(db)
+
+    // One catch-all program, and every class is in it: a gym that never had
+    // programs had exactly one.
+    const programs = db.prepare('SELECT id, name, default_start_time FROM programs').all()
+    expect(programs).toEqual([{ id: 1, name: 'General', default_start_time: null }])
+    const classes = db.prepare('SELECT name, program_id FROM groups ORDER BY id').all()
+    expect(classes).toEqual([
+      { name: 'Level 3', program_id: 1 },
+      { name: 'Boys Team', program_id: 1 },
+    ])
+
+    // Required events keep their durations and gain ANY — which is what
+    // they meant when order was unconstrained.
+    const required = JSON.parse(
+      (db.prepare('SELECT required_events AS r FROM groups WHERE id = 1').get() as { r: string }).r,
+    )
+    expect(required).toEqual([
+      { eventId: 1, duration: 30, position: 'ANY' },
+      { eventId: 2, duration: 15, position: 'ANY' },
+    ])
+
+    // Class-level default times exist and start unset.
+    const cols = (
+      db.prepare("SELECT name FROM pragma_table_info('groups')").all() as { name: string }[]
+    ).map((c) => c.name)
+    expect(cols).toEqual(expect.arrayContaining(['program_id', 'default_start_time', 'default_end_time']))
+    expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+  })
+
+  it('does not invent a program for a gym that has no classes', () => {
+    const db = openDb(':memory:')
+    expect(db.prepare('SELECT COUNT(*) AS n FROM programs').get()).toMatchObject({ n: 0 })
+  })
 })

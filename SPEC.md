@@ -40,6 +40,12 @@ Fully user-defined — the examples below are illustrative, never a fixed list.
 - `capacity` — optional limit on how many classes can use it simultaneously
   (apparatus usually 1; floor might fit 2). Unset means no limit — think
   open stretching areas or conditioning.
+
+Events are **facility-wide shared resources**, not owned by a program.
+Classes from different programs routinely require the same one — Preschool's
+Tiny Tot 1 and Rec Gym's Rec Gym 1 both want the Tumble Trak — and two
+classes must never be on it at once. That contention is the core constraint
+the generator exists to solve.
 - `active` — can be marked unavailable (equipment down)
 - `color` — hex color shown everywhere the event appears (grid, Excel
   export, print view). Users pick from a curated palette of distinct,
@@ -51,19 +57,44 @@ Fully user-defined — the examples below are illustrative, never a fixed list.
 - `specialties` — which events they can coach
 - `availability` — which sessions/days they work
 
+### Program
+A facility offering that groups classes: "Preschool", "Rec Gym", "Team".
+- `name`
+- `defaultStartTime` / `defaultEndTime` — optional. The clock its classes
+  run on by default, so a whole program can be staggered against another
+  (Preschool 16:00–17:00 while Rec Gym runs 17:00–19:00).
+
+A program is how a gym's structure is entered in bulk: classes hang off it,
+and a session can take on a whole program's worth of classes at once.
+
 ### Class (training group)
 Called "group" in early versions — the UI and API now say "class"; SQLite
 storage keeps the original `groups` table name behind the server's mappers.
-- `name` (e.g., "Level 3 Girls", "Boys Team", "Xcel Silver")
+- `name` (e.g., "Tiny Tot 1", "Rec Gym 1", "Level 3 Girls")
+- `programId` — the program it belongs to
 - `level` / priority — higher-priority classes get first pick when conflicts
   arise (e.g., optionals over recreational)
-- `requiredEvents` — **optional**. The events this class must hit when the
-  solver fills its window, each with a **duration** (a multiple of 5 min),
-  freely editable per class (Silver does 20 min vault while Gold does 35).
-  While editing, the form shows the total required time against the class's
-  window in each session it is placed in, so a schedule that cannot fit is
-  visible before generating. Required events are **only** an input to
-  generation — painting a schedule by hand needs no setup at all.
+- `requiredEvents` — **the class's structure, and the main input to
+  generation.** A list of (event, **duration**, **position**):
+  - `duration` is per class per event, never global: Tiny Tot 1 might do
+    15 min at each event while Rec Gym 1 does 10.
+  - `position` anchors the event in the class's order:
+    - `FIRST` — the class starts with it (a warm-up)
+    - `LAST` — the class ends with it (a cool-down)
+    - `ANY` — free to fall anywhere in between
+    Several `FIRST` events simply all come before everything else, in
+    whatever order fits; likewise several `LAST` all come after. **A
+    position anchors the order, not the clock**: a warm-up is the first
+    thing the class does, not something pinned to the minute its window
+    opens. Pinning would make perfectly good schedules impossible the
+    moment two classes wanted the same warm-up apparatus — which is exactly
+    what a shared Tumble Trak causes.
+  While editing, the form shows the running total required time against the
+  class's window, so a class that cannot fit is visible before generating.
+- `defaultStartTime` / `defaultEndTime` — optional, overriding the
+  program's. A class's window in a session defaults to its own times, else
+  its program's, else the session's — so classes can run on different clocks
+  and be staggered.
 - `assignedCoaches` — coaches who travel with this class (some gyms rotate
   coaches by event instead; support both via a setting)
 
@@ -118,10 +149,17 @@ overlap; painting over an existing block overwrites the painted span.
 
 ## Building a schedule
 
-**Drag-to-paint is the primary way a schedule gets built.** The solver is a
-secondary convenience, not the main path. A head coach with a grid and a
-mouse must be able to build a full session without configuring anything
-first — no required events, no priorities, no setup.
+**Generate first; edit by hand only as cleanup.** A gym enters its
+*structure* once — programs, their classes, each class's events with
+durations and position anchors — and Salto turns that into a conflict-free
+rotation on demand. Building a whole session by hand is not the intended
+path; it is the touch-up afterwards.
+
+This is a reversal of an earlier version, which made drag-to-paint primary
+and generation optional. Gyms told us the manual work was the problem: the
+structure is stable week to week, so it should be entered once and reused,
+not re-drawn every session. Manual editing is still fully supported (see
+"Editing") — it just is not where a schedule comes from.
 
 ### The grid
 Classes across the top, time down the left — the same orientation as the
@@ -136,8 +174,10 @@ Each column is a lane holding one or more class placements stacked in time;
 the class header (name + its time range) sits at the top of its block within
 the column. Outside a class's window the column is blank.
 
-### Editing
-Three gestures, kept apart by **where the press lands**, so they never fight:
+### Editing (cleanup)
+Once a schedule is generated, the grid is where it gets tweaked: nudge a
+block, stretch one, drop one that isn't happening today. Three gestures,
+kept apart by **where the press lands**, so they never fight:
 
 - **Empty rows inside a class → paint.** Pick an event from the palette and
   drag down the rows; the drag defines the length, the release commits.
@@ -161,18 +201,27 @@ a delete affordance, so removing something never needs a mode change.
 Because a press on a block moves it, painting over a *fully* painted class is
 done by dragging in from open time, erasing first, or deleting a block. That
 is the cost of making move a first-class gesture, and it is the right trade:
-moving and resizing are what a built schedule needs most.
+moving and resizing are what a generated schedule needs most.
 
 It must be fluid: minimal clicks, no keyboard needed, mouse or touch.
 
-### Generation (optional)
-"Generate" fills events **within each class's own window**, respecting that
-class's required events and durations. Manual and generated blocks coexist,
-and locked blocks are planned around.
+### Generation — the primary path
+A session **gathers the classes attending** (pick a whole program, or pick
+classes individually). Each lands on its own window — its own default times,
+else its program's, else the session's — packed into columns so classes that
+never overlap share a lane.
+
+"Generate" then produces a **complete rotation in one shot**: every class
+visits all of its required events for their full per-class durations, inside
+its own window, honouring FIRST/LAST anchors, and **no two classes are ever
+on the same event at once** (capacity permitting). "Shuffle" re-rolls the
+seed for a different valid layout. Manual and generated blocks coexist, and
+locked blocks are planned around.
 
 **Hard constraints (never violated):**
 1. An event's simultaneous classes never exceed its capacity (events
-   without a limit are unconstrained).
+   without a limit are unconstrained). **This is the core one** — events are
+   shared across programs and contended.
 2. A class is in exactly one place at a time. (Structural: blocks live
    inside a placement and never overlap within it.)
 3. A coach is in exactly one place at a time.
@@ -180,6 +229,8 @@ and locked blocks are planned around.
    **inside that class's own window** — not the session window.
 5. Inactive events are never scheduled.
 6. Blocks never fall outside their class's window.
+7. Position anchors hold: every `FIRST` event comes before every `ANY` and
+   `LAST` one, and every `LAST` after every `FIRST` and `ANY`.
 
 **Soft constraints (optimize, in priority order):**
 1. Higher-priority classes get their preferred/required layout first.
@@ -196,9 +247,12 @@ and locked blocks are planned around.
 - If greedy + backtracking proves insufficient, upgrade to a proper CSP
   solver. Keep the solver a pure, well-tested module with no UI dependencies
   so it can be swapped/upgraded independently.
-- If no valid schedule exists, report *why* against the class's own window
-  ("Silver has 40 min of required events but only a 30-min window") rather
-  than failing silently.
+- If no valid schedule exists, report *why*, specifically and per class —
+  "Rec Gym 1 needs 40 min of events but its window is only 30 min", or
+  "Tumble Trak is over-subscribed: 5 classes need 200 min on it between
+  16:00–18:00, which only fits 120 min" — rather than failing silently.
+  These messages are the user's only feedback when their structure doesn't
+  work, so they have to name the class or the event at fault.
 - Generation should feel instant (<2s) for realistic sizes: ~16 classes, ~8
   events, a 4-hour window at 5-minute rows.
 
@@ -213,7 +267,8 @@ window, the exactly-tight window, the trivial session.
 > Remaining ideas live under "Later / nice-to-have".
 
 ### Phase 1 — Setup & manual grid (walking skeleton)
-- CRUD for events, coaches, classes, sessions
+- CRUD for programs, events, coaches, classes, sessions — this structure is
+  the main input, so entering it has to be fast
 - **First-run experience:** a new gym sees an empty database and goes
   straight to the app — the Events / Classes / Coaches / Sessions pages are
   the setup. The home page points at them and offers **"load example gym"**,
@@ -222,9 +277,10 @@ window, the exactly-tight window, the trivial session.
   removable. There is deliberately **no guided wizard**: it was tried and
   removed — it added a parallel way to do everything the normal pages
   already do, and a step order that real gyms don't follow.
-- The schedule grid: **classes as columns, time as rows** (5-minute rows),
-  built by placing classes into columns for their own windows and then
-  **drag-painting** events down the rows (see "Building a schedule")
+- The schedule grid: **classes as columns, time as rows** (5-minute rows).
+  It **displays** what generation decided and is where the schedule gets
+  hand-tweaked; the generator, not the grid, is what puts a class on an
+  event at a time (see "Building a schedule")
 - Conflict highlighting in the manual editor (overlapping placements in a
   column; a coach or over-capacity event double-booked across columns)
 - Data persistence
@@ -234,8 +290,9 @@ window, the exactly-tight window, the trivial session.
 This phase alone already beats the whiteboard, and it validates the data
 model before the solver is built.
 
-### Phase 2 — Auto-generation
-- "Generate schedule" for a session using the solver
+### Phase 2 — Auto-generation *(the primary path — see "Building a schedule")*
+- Gather a session's classes by program or individually, then "Generate" a
+  complete conflict-free rotation from the entered structure
 - Show unmet constraints clearly when generation fails
 - Regenerate with a different seed ("shuffle") to get alternative layouts
 - Manual overrides on top of a generated schedule (lock a cell, regenerate
@@ -340,6 +397,10 @@ simple and single-gym:
 
 ## UX Notes
 
+- **Entering the structure is now the main input**, so the Programs /
+  Classes / Events pages carry as much weight as the grid: grouped, quick to
+  fill in, and honest about whether a class's events fit its window before
+  the user hits Generate.
 - The schedule grid is the product. Invest there: readable at a glance,
   color-coded by event, dense but not cramped.
 - **It has to hold up at real size.** A session routinely runs 16+ classes

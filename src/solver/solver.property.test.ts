@@ -21,6 +21,8 @@ const arbInput: fc.Arbitrary<SolverInput> = fc
         fc.record({
           eventIndex: fc.nat({ max: 5 }),
           durationSlots: fc.integer({ min: 1, max: 4 }),
+          // Anchors are part of the structure, so fuzz them too.
+          position: fc.constantFrom('FIRST' as const, 'ANY' as const, 'LAST' as const),
         }),
         { maxLength: 4 },
       ),
@@ -53,6 +55,7 @@ const arbInput: fc.Arbitrary<SolverInput> = fc
         .map((r) => ({
           eventId: (r.eventIndex % raw.eventCount) + 1,
           duration: r.durationSlots * 5,
+          position: r.position,
         }))
         .filter((r) => (seen.has(r.eventId) ? false : (seen.add(r.eventId), true)))
       return {
