@@ -121,11 +121,25 @@ describe('Excel export', () => {
     await request(app).get('/api/sessions/9999/export').set('Cookie', cookie).expect(404)
   })
 
+  it('writes one sheet per plan week', async () => {
+    const res = await request(app)
+      .get(`/api/sessions/${sessionId}/export`)
+      .set('Cookie', cookie)
+      .buffer(true)
+      .parse(binaryParser)
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.load(res.body as Buffer)
+    expect(workbook.worksheets.map((w) => w.name)).toEqual(['Week 1', 'Week 2', 'Week 3', 'Week 4'])
+    // Only week 1 was painted, so week 2's grid is empty of event blocks.
+    const week2 = workbook.worksheets[1]!
+    expect(week2.getCell('A1').value).toBe('Monday Practice — Week 2')
+  })
+
   it('lays lanes out as columns and time as 5-minute rows', async () => {
     const { res, sheet } = await downloadSheet()
     expect(res.headers['content-disposition']).toContain('salto-monday-practice.xlsx')
 
-    expect(sheet.getCell('A1').value).toBe('Monday Practice')
+    expect(sheet.getCell('A1').value).toBe('Monday Practice — Week 1')
     expect(String(sheet.getCell('A2').value)).toContain('Monday, March 2, 2026 · 16:00–18:00')
 
     // A lane header names the classes it runs, in order — a column is a

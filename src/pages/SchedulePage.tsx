@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import type {
+  ClassCoverage,
   Coach,
   GymClass,
   GymEvent,
@@ -9,6 +10,7 @@ import type {
   Session,
   Settings,
 } from '../../shared/types.ts'
+import { PLAN_WEEKS } from '../../shared/types.ts'
 import {
   SLOT_MINUTES,
   formatRange,
@@ -42,7 +44,8 @@ import {
   swapColumns,
   toggleBlockLock,
 } from '../lib/paint.ts'
-import { generateSchedule } from '../solver/solver.ts'
+import { generatePlan } from '../solver/plan.ts'
+import type { PlanPlacement } from '../solver/plan.ts'
 import { describeRepairChanges, repairSchedule } from '../solver/repair.ts'
 import { Button, Card, ChipPicker, ErrorNote, FieldGroup } from '../components/ui.tsx'
 import { CopySessionDialog } from '../components/CopySessionDialog.tsx'
@@ -102,8 +105,12 @@ export function SchedulePage() {
   const eventsLoad = useLoad(() => apiGet<{ events: GymEvent[] }>('/api/events'))
   const classesLoad = useLoad(() => apiGet<{ classes: GymClass[] }>('/api/classes'))
   const coachesLoad = useLoad(() => apiGet<{ coaches: Coach[] }>('/api/coaches'))
+  // Which week of the plan the grid is showing. The schedule loader reads it
+  // from a ref so reload() always fetches the visible week.
+  const [week, setWeek] = useState(1)
+  const weekRef = useRef(1)
   const scheduleLoad = useLoad(() =>
-    apiGet<{ schedule: Schedule }>(`/api/sessions/${sessionId}/schedule`),
+    apiGet<{ schedule: Schedule }>(`/api/sessions/${sessionId}/schedule?week=${weekRef.current}`),
   )
   const programsLoad = useLoad(() => apiGet<{ programs: Program[] }>('/api/programs'))
   const settingsLoad = useLoad(() => apiGet<{ settings: Settings }>('/api/settings'))
@@ -117,6 +124,8 @@ export function SchedulePage() {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [generationErrors, setGenerationErrors] = useState<string[] | null>(null)
   const [repairSummary, setRepairSummary] = useState<string[] | null>(null)
+  const [coverage, setCoverage] = useState<ClassCoverage[] | null>(null)
+  const [generating, setGenerating] = useState(false)
   const [copyOpen, setCopyOpen] = useState(false)
   const [addingTo, setAddingTo] = useState<number | null>(null)
   const [editingPlacement, setEditingPlacement] = useState<number | null>(null)
@@ -125,6 +134,12 @@ export function SchedulePage() {
   useEffect(() => {
     if (scheduleLoad.data) setSchedule(scheduleLoad.data.schedule)
   }, [scheduleLoad.data])
+  // Switching weeks refetches that week's grid.
+  useEffect(() => {
+    weekRef.current = week
+    void scheduleLoad.reload()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [week])
   useEffect(() => {
     if (sessionLoad.data) setColumnCount(sessionLoad.data.session.columnCount)
   }, [sessionLoad.data])
@@ -154,7 +169,7 @@ export function SchedulePage() {
       setSaveState('saving')
       try {
         const res = await apiPut<{ schedule: Schedule }>(
-          `/api/sessions/${sessionId}/schedule`,
+          `/api/sessions/${sessionId}/schedule?week=${weekRef.current}`,
           { placements: next.placements },
         )
         // Adopt the server's ids so later edits address real rows.
@@ -402,36 +417,132 @@ export function SchedulePage() {
     seed: Math.floor(Math.random() * 2 ** 31),
   })
 
-  const generate = () => {
-    if (!settingsLoad.data) return
-    const unlocked = schedule.placements.flatMap((p) => p.blocks.filter((b) => !b.locked)).length
+  // Generate the whole four-week plan. Fetches every week (for the locked
+  // blocks it must plan around), runs the pure plan solver, then writes back
+  // each unlocked week plus the plan's locks and warnings. Locked weeks are
+  // left alone.
+  const generatePlanNow = async () => {
+    if (!settingsLoad.data || !session) return
+    const locks = session.weekLocks
     if (
-      unlocked > 0 &&
       !confirm(
-        `Replace ${unlocked} unlocked block${unlocked === 1 ? '' : 's'}? ` +
-          `Locked blocks (🔒) are kept. Lock anything you painted by hand that you want to survive.`,
+        'Generate the four-week plan? Unlocked weeks are rebuilt; locked weeks (and locked blocks) are kept.',
       )
     ) {
       return
     }
-    const result = generateSchedule({
-      ...solverBits(),
-      placements: schedule.placements.map((p) => ({
-        id: p.id,
-        classId: p.classId,
-        startMin: p.startMin,
-        endMin: p.endMin,
-        locked: p.blocks
-          .filter((b) => b.locked)
-          .map(({ eventId, coachId, startMin, endMin }) => ({ eventId, coachId, startMin, endMin })),
-      })),
-    })
-    if (!result.ok) {
-      setGenerationErrors(result.reasons)
-      return
-    }
+    setGenerating(true)
     setGenerationErrors(null)
-    apply(fromSolver(schedule, result.placements))
+    try {
+      // Every week's current grid, so the plan can preserve locked work.
+      const weekSchedules = await Promise.all(
+        Array.from({ length: PLAN_WEEKS }, (_, i) =>
+          apiGet<{ schedule: Schedule }>(`/api/sessions/${sessionId}/schedule?week=${i + 1}`).then(
+            (r) => r.schedule,
+          ),
+        ),
+      )
+      const planPlacements: PlanPlacement[] = weekSchedules.flatMap((sched, i) =>
+        sched.placements.map((p) => ({
+          id: p.id,
+          classId: p.classId,
+          week: i + 1,
+          startMin: p.startMin,
+          endMin: p.endMin,
+          blocks: p.blocks.map((b) => ({
+            eventId: b.eventId,
+            coachId: b.coachId,
+            startMin: b.startMin,
+            endMin: b.endMin,
+            locked: b.locked,
+          })),
+        })),
+      )
+
+      const result = generatePlan({
+        events: events.map(({ id, name, duration, shared, active }) => ({
+          id,
+          name,
+          duration,
+          shared,
+          active,
+        })),
+        classes: classes.map((cls) => ({
+          id: cls.id,
+          name: cls.name,
+          priority: cls.priority,
+          eligibleEventIds: cls.eligibleEventIds,
+          periodMinutes: cls.periodMinutes,
+          warmupEventId: cls.warmupEventId,
+          warmupMinutes: cls.warmupMinutes,
+          cooldownEventId: cls.cooldownEventId,
+          cooldownMinutes: cls.cooldownMinutes,
+          assignedCoaches: cls.assignedCoaches,
+        })),
+        coaches: coaches.map(({ id, name, specialties }) => ({ id, name, specialties })),
+        placements: planPlacements,
+        weekLocks: locks,
+        coachMode: settingsLoad.data.settings.coachMode,
+        adjacencyPenalties: settingsLoad.data.settings.adjacencyPenalties,
+        seed: Math.floor(Math.random() * 2 ** 31),
+      })
+      if (!result.ok) {
+        setGenerationErrors(result.reasons)
+        return
+      }
+
+      // Write each unlocked week back, preserving which blocks were locked.
+      for (let w = 1; w <= PLAN_WEEKS; w++) {
+        if (locks[w - 1]) continue
+        const sched = weekSchedules[w - 1]!
+        const planWeek = result.weeks.find((x) => x.week === w)
+        const placements = sched.placements.map((p) => {
+          const pr = planWeek?.placements.find((r) => r.placementId === p.id)
+          const wasLocked = new Set(
+            p.blocks.filter((b) => b.locked).map((b) => `${b.eventId}:${b.startMin}:${b.endMin}`),
+          )
+          return {
+            classId: p.classId,
+            columnIndex: p.columnIndex,
+            startMin: p.startMin,
+            endMin: p.endMin,
+            blocks: (pr?.blocks ?? []).map((b) => ({
+              eventId: b.eventId,
+              coachId: b.coachId,
+              startMin: b.startMin,
+              endMin: b.endMin,
+              locked: wasLocked.has(`${b.eventId}:${b.startMin}:${b.endMin}`),
+            })),
+          }
+        })
+        await apiPut(`/api/sessions/${sessionId}/schedule?week=${w}`, { placements })
+      }
+
+      // Persist the plan's flags alongside the (unchanged) locks.
+      await apiPut(`/api/sessions/${sessionId}/week-locks`, {
+        weekLocks: locks,
+        planWarnings: result.warnings,
+      })
+
+      setCoverage(result.coverage)
+      await Promise.all([sessionLoad.reload(), scheduleLoad.reload()])
+      setSaveError(null)
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'could not generate the plan')
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  const toggleWeekLock = async (w: number) => {
+    if (!session) return
+    const next = session.weekLocks.map((locked, i) => (i === w - 1 ? !locked : locked))
+    try {
+      await apiPut(`/api/sessions/${sessionId}/week-locks`, { weekLocks: next })
+      await sessionLoad.reload()
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'could not change the lock')
+    }
   }
 
   const repair = () => {
@@ -634,7 +745,7 @@ export function SchedulePage() {
         <h2 className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
           Classes attending
           <span className="ml-2 font-normal text-slate-500 dark:text-slate-400">
-            each runs on its own clock — its times, else its program's, else the whole session
+            all run the same clock — the whole session window, every week
           </span>
         </h2>
         <Attending
@@ -646,23 +757,81 @@ export function SchedulePage() {
         />
       </div>
 
-      {/* Step 2: generate. This is how a schedule is made; the palette
-          below is for touching up what comes out. */}
+      {/* Step 2: generate the four-week plan. This is how a plan is made; the
+          palette below is for touching up what comes out, week by week. */}
       <div className="flex flex-wrap items-center gap-3 rounded-xl bg-indigo-50 p-4 ring-1 ring-indigo-200 dark:bg-indigo-950 dark:ring-indigo-800">
-        <Button onClick={generate} disabled={schedule.placements.length === 0}>
-          Generate schedule
+        <Button
+          onClick={() => void generatePlanNow()}
+          disabled={schedule.placements.length === 0 || generating}
+        >
+          {generating ? 'Generating…' : 'Generate 4-week plan'}
         </Button>
-        {schedule.placements.some((p) => p.blocks.length > 0) && (
-          <Button variant="secondary" onClick={generate} title="Regenerate with a new seed">
-            Shuffle
+        {(schedule.placements.some((p) => p.blocks.length > 0) ||
+          session.planWarnings.length > 0) && (
+          <Button
+            variant="secondary"
+            onClick={() => void generatePlanNow()}
+            disabled={generating}
+            title="Re-randomize; locked weeks and blocks are kept"
+          >
+            Re-randomize
           </Button>
         )}
         <p className="flex-1 text-sm text-indigo-900 dark:text-indigo-100">
           {schedule.placements.length === 0
-            ? 'Add the classes attending, then generate their rotation.'
-            : 'Builds the whole rotation from each class’s events, durations and order. Shuffle re-rolls for a different valid layout; locked blocks (🔒) are kept.'}
+            ? 'Add the classes attending, then generate their four-week rotation.'
+            : 'Draws each class a fitting subset of its eligible events every week, spreading coverage so each is attended at least twice. Re-randomize re-rolls; locked weeks (🔒) and locked blocks are kept.'}
         </p>
       </div>
+
+      {/* Week switcher: the plan is four grids on the same clock. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Week</span>
+        {Array.from({ length: PLAN_WEEKS }, (_, i) => i + 1).map((w) => {
+          const locked = session.weekLocks[w - 1] === true
+          const current = w === week
+          return (
+            <div key={w} className="flex items-center">
+              <button
+                onClick={() => setWeek(w)}
+                aria-pressed={current}
+                className={`min-h-10 rounded-l-lg px-3 py-1.5 text-sm font-semibold ring-1 ring-slate-300 dark:ring-slate-600 ${
+                  current
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-white text-slate-700 hover:bg-slate-50 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600'
+                }`}
+              >
+                {w}
+              </button>
+              <button
+                onClick={() => void toggleWeekLock(w)}
+                aria-label={locked ? `unlock week ${w}` : `lock week ${w}`}
+                title={locked ? 'Locked — kept when regenerating' : 'Lock this week against regeneration'}
+                className={`min-h-10 rounded-r-lg border-l-0 px-2 py-1.5 text-sm ring-1 ring-slate-300 dark:ring-slate-600 ${
+                  locked
+                    ? 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-200'
+                    : 'bg-white text-slate-400 hover:bg-slate-50 dark:bg-slate-700 dark:hover:bg-slate-600'
+                }`}
+              >
+                {locked ? '🔒' : '🔓'}
+              </button>
+            </div>
+          )
+        })}
+        <span className="text-xs text-slate-500 dark:text-slate-400">
+          Editing week {week}
+          {session.weekLocks[week - 1] ? ' (locked)' : ''}
+        </span>
+      </div>
+
+      {(coverage !== null || session.planWarnings.length > 0) && (
+        <CoveragePanel
+          coverage={coverage}
+          warnings={session.planWarnings}
+          classes={classes}
+          events={events}
+        />
+      )}
 
       {/* Cleanup tools, secondary to generation. */}
       <details className="rounded-xl bg-white p-3 ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700">
@@ -1203,6 +1372,74 @@ export function SchedulePage() {
             />
           )
         })()}
+    </div>
+  )
+}
+
+/**
+ * The plan's coverage at a glance: per class, how many times each eligible
+ * event is attended across the four weeks, and the plain-language flags for
+ * anything that fell short. Warnings persist with the session; the per-event
+ * grid only appears right after a generation.
+ */
+function CoveragePanel({
+  coverage,
+  warnings,
+  classes,
+  events,
+}: {
+  coverage: ClassCoverage[] | null
+  warnings: string[]
+  classes: GymClass[]
+  events: GymEvent[]
+}) {
+  const classById = new Map(classes.map((c) => [c.id, c]))
+  const eventById = new Map(events.map((e) => [e.id, e]))
+  return (
+    <div className="rounded-xl bg-white p-4 ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700">
+      <h2 className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
+        Coverage across the four weeks
+      </h2>
+      {warnings.length > 0 && (
+        <ul className="mb-3 space-y-1">
+          {warnings.map((w, i) => (
+            <li key={i} className="text-sm font-medium text-amber-700 dark:text-amber-300">
+              ⚠ {w}
+            </li>
+          ))}
+        </ul>
+      )}
+      {coverage === null ? (
+        <p className="text-sm text-slate-500 dark:text-slate-400">
+          Regenerate to see each class's per-event visit counts.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {coverage.map((cls) => (
+            <div key={cls.classId} className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                {classById.get(cls.classId)?.name ?? `class #${cls.classId}`}
+              </span>
+              {cls.events.length === 0 && (
+                <span className="text-sm text-slate-400 dark:text-slate-500">no eligible events</span>
+              )}
+              {cls.events.map((cov) => (
+                <span
+                  key={cov.eventId}
+                  className={`rounded px-1.5 py-0.5 text-xs font-medium ${
+                    cov.short
+                      ? 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200'
+                      : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200'
+                  }`}
+                  title={cov.short ? 'below the target of 2 visits' : undefined}
+                >
+                  {eventById.get(cov.eventId)?.name ?? `#${cov.eventId}`}: {cov.visits}
+                </span>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

@@ -282,7 +282,12 @@ export function scheduleRoutes(db: DatabaseSync): Router {
     res.json({ schedule: loadSchedule(db, sessionId, 1) })
   })
 
-  /** Which weeks are locked against re-generation (a boolean per week). */
+  /**
+   * Which weeks are locked against re-generation (a boolean per week), and
+   * optionally the plan's coverage/collision warnings. `planWarnings` is only
+   * touched when provided, so toggling a lock never clears the last
+   * generation's flags.
+   */
   router.put('/sessions/:id/week-locks', (req, res) => {
     const sessionId = idParam(req.params.id)
     if (!db.prepare('SELECT id FROM sessions WHERE id = ?').get(sessionId)) {
@@ -293,6 +298,18 @@ export function scheduleRoutes(db: DatabaseSync): Router {
       throw new ApiError(400, `weekLocks must be ${PLAN_WEEKS} booleans`)
     }
     const locks = obj.weekLocks.map((v) => reqBool(v, 'weekLocks'))
+    if (obj.planWarnings !== undefined) {
+      if (!Array.isArray(obj.planWarnings) || obj.planWarnings.some((w) => typeof w !== 'string')) {
+        throw new ApiError(400, 'planWarnings must be an array of strings')
+      }
+      db.prepare('UPDATE sessions SET week_locks = ?, plan_warnings = ? WHERE id = ?').run(
+        JSON.stringify(locks),
+        JSON.stringify(obj.planWarnings),
+        sessionId,
+      )
+      res.json({ weekLocks: locks, planWarnings: obj.planWarnings })
+      return
+    }
     db.prepare('UPDATE sessions SET week_locks = ? WHERE id = ?').run(JSON.stringify(locks), sessionId)
     res.json({ weekLocks: locks })
   })

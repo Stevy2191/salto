@@ -4,6 +4,8 @@ import type { DatabaseSync } from 'node:sqlite'
 import { SLOT_MINUTES, formatRange, formatTime, rowCount, rowStartMin } from '../../shared/slots.ts'
 import { textColorFor } from '../../shared/colors.ts'
 import { formatDateLong, formatDateShort } from '../../shared/dates.ts'
+import { PLAN_WEEKS } from '../../shared/types.ts'
+import type { Placement } from '../../shared/types.ts'
 import { ApiError, idParam } from '../validate.ts'
 import { loadSchedule } from './schedule.ts'
 
@@ -66,7 +68,6 @@ export function exportRoutes(db: DatabaseSync): Router {
 
     const window = { startTime: session.start_time, endTime: session.end_time }
     const label = session.name || `${formatDateShort(session.date)} ${session.start_time}`
-    const { placements } = loadSchedule(db, sessionId)
 
     const classNames = new Map(
       (db.prepare('SELECT id, name FROM groups').all() as { id: number; name: string }[]).map(
@@ -89,7 +90,10 @@ export function exportRoutes(db: DatabaseSync): Router {
     const columnCount = Math.max(session.column_count, 1)
     const totalColumns = 1 + columnCount
 
-    const sheet = workbook.addWorksheet(sheetName(label), {
+    // One sheet per plan week, same layout. A rotation plan is four weeks on
+    // the same clock, so each week is its own printable grid.
+    const buildSheet = (weekNumber: number, placements: Placement[]) => {
+    const sheet = workbook.addWorksheet(sheetName(`Week ${weekNumber}`), {
       pageSetup: {
         // 16+ classes never fit portrait; tile across pages instead of
         // shrinking the sheet into illegibility.
@@ -108,10 +112,10 @@ export function exportRoutes(db: DatabaseSync): Router {
     const FIRST_SLOT_ROW = 4
     const rowFor = (min: number) => FIRST_SLOT_ROW + (min - rowStartMin(window, 0)) / SLOT_MINUTES
 
-    // Rows 1–2: session name, then date + time range.
+    // Rows 1–2: session name and week, then date + time range.
     sheet.mergeCells(1, 1, 1, totalColumns)
     const title = sheet.getCell(1, 1)
-    title.value = label
+    title.value = `${label} — Week ${weekNumber}`
     title.font = { bold: true, size: 14 }
 
     sheet.mergeCells(2, 1, 2, totalColumns)
@@ -224,6 +228,11 @@ export function exportRoutes(db: DatabaseSync): Router {
     }
     for (let r = 0; r < rows; r++) {
       sheet.getRow(FIRST_SLOT_ROW + r).height = 12
+    }
+    }
+
+    for (let w = 1; w <= PLAN_WEEKS; w++) {
+      buildSheet(w, loadSchedule(db, sessionId, w).placements)
     }
 
     res.setHeader(
