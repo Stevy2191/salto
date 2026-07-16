@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import request from 'supertest'
 import type { Express } from 'express'
-import type { GymClass, GymEvent, Schedule, Session } from '../../shared/types.ts'
+import type { GymClass, GymEvent, Program, Schedule, Session } from '../../shared/types.ts'
 import { isIsoDate, todayIsoDate } from '../../shared/dates.ts'
 import { isSnapped, overlaps, sessionWindow } from '../../shared/slots.ts'
 import { appWithAdmin } from './helpers.ts'
@@ -85,40 +85,69 @@ describe('example gym', () => {
     }
   })
 
-  it('demonstrates the lane model: stacked classes, a full run, partial windows', async () => {
+  it('demonstrates the whole model: programs, anchors, and a contended event', async () => {
     await request(app).post('/api/example-gym').set('Cookie', cookie).expect(201)
-    const sessions: Session[] = (await request(app).get('/api/sessions').set('Cookie', cookie)).body.sessions
-    const classes: GymClass[] = (await request(app).get('/api/classes').set('Cookie', cookie)).body.classes
-    const nameOf = new Map(classes.map((c) => [c.id, c.name]))
+    const programs: Program[] = (await request(app).get('/api/programs').set('Cookie', cookie)).body
+      .programs
+    const classes: GymClass[] = (await request(app).get('/api/classes').set('Cookie', cookie)).body
+      .classes
+    const events: GymEvent[] = (await request(app).get('/api/events').set('Cookie', cookie)).body
+      .events
 
+    // Several programs, on staggered clocks.
+    expect(programs.length).toBeGreaterThanOrEqual(3)
+    expect(programs.every((p) => p.defaultStartTime && p.defaultEndTime)).toBe(true)
+    expect(new Set(programs.map((p) => p.defaultStartTime)).size).toBeGreaterThan(1)
+
+    // Every class belongs to one, and every program has classes.
+    expect(classes.every((c) => c.programId !== null)).toBe(true)
+    for (const program of programs) {
+      expect(classes.some((c) => c.programId === program.id)).toBe(true)
+    }
+
+    // Warm-ups and cool-downs are anchored.
+    expect(classes.every((c) => c.requiredEvents.some((r) => r.position === 'FIRST'))).toBe(true)
+    expect(classes.every((c) => c.requiredEvents.some((r) => r.position === 'LAST'))).toBe(true)
+
+    // Durations are per class, not global: the same event is held for
+    // different lengths by different classes.
+    const perEvent = new Map<number, Set<number>>()
+    for (const c of classes) {
+      for (const r of c.requiredEvents) {
+        perEvent.set(r.eventId, (perEvent.get(r.eventId) ?? new Set()).add(r.duration))
+      }
+    }
+    expect([...perEvent.values()].some((durations) => durations.size > 1)).toBe(true)
+
+    // A one-at-a-time apparatus that classes from different programs all
+    // want — the contention the generator exists to resolve.
+    const trak = events.find((e) => e.name === 'Tumble Trak')!
+    expect(trak.capacity).toBe(1)
+    const wantTrak = classes.filter((c) => c.requiredEvents.some((r) => r.eventId === trak.id))
+    expect(wantTrak.length).toBeGreaterThanOrEqual(3)
+    expect(new Set(wantTrak.map((c) => c.programId)).size).toBeGreaterThan(1)
+
+    // A class on its own clock, overriding its program's.
+    expect(classes.some((c) => c.defaultStartTime !== null)).toBe(true)
+  })
+
+  it('arrives with classes gathered and nothing painted — Generate is the demo', async () => {
+    await request(app).post('/api/example-gym').set('Cookie', cookie).expect(201)
+    const sessions: Session[] = (await request(app).get('/api/sessions').set('Cookie', cookie)).body
+      .sessions
     const monday = sessions.find((s) => s.name.startsWith('Monday'))!
+
     const { schedule } = (
       await request(app).get(`/api/sessions/${monday.id}/schedule`).set('Cookie', cookie)
     ).body as { schedule: Schedule }
-    const { startMin, endMin } = sessionWindow(monday)
 
-    // A lane running several classes back to back, in order, touching but
-    // never overlapping.
-    const stacked = schedule.placements
-      .filter((p) => p.columnIndex === 0)
-      .sort((a, b) => a.startMin - b.startMin)
-    expect(stacked.length).toBeGreaterThanOrEqual(3)
-    expect(stacked.map((p) => nameOf.get(p.classId))).toEqual(['LV 1', 'LV 2', 'VYC 2'])
-    for (let i = 1; i < stacked.length; i++) {
-      expect(stacked[i]!.startMin).toBe(stacked[i - 1]!.endMin)
-    }
-
-    // A class running the whole session…
-    expect(
-      schedule.placements.some((p) => p.startMin === startMin && p.endMin === endMin),
-    ).toBe(true)
-    // …and classes taking only part of it, leaving genuine blank time.
-    expect(schedule.placements.some((p) => p.endMin < endMin)).toBe(true)
-    expect(schedule.placements.some((p) => p.startMin > startMin)).toBe(true)
-    // Some work is already painted, and it is not a single event.
-    const painted = schedule.placements.flatMap((p) => p.blocks)
-    expect(painted.length).toBeGreaterThan(4)
-    expect(new Set(painted.map((b) => b.eventId)).size).toBeGreaterThan(1)
+    // Every class is in and has a window, packed into fewer lanes than
+    // classes — Preschool finishes before Team starts, so they share.
+    expect(schedule.placements.length).toBeGreaterThanOrEqual(8)
+    expect(monday.columnCount).toBeLessThan(schedule.placements.length)
+    expect(schedule.placements.every((p) => p.endMin > p.startMin)).toBe(true)
+    // Nothing is painted: the point is to press Generate.
+    expect(schedule.placements.flatMap((p) => p.blocks)).toEqual([])
   })
 
   it('refuses to double-seed', async () => {

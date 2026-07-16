@@ -71,8 +71,9 @@ async function moveBlockRows(page: Page, block: Loc, rows: number, { expectSave 
 
 /** Wipe a class's window so a test can paint exactly what it needs. */
 async function clearLane(page: Page, placement: Loc) {
+  await openEditTools(page)
   await page.getByRole('button', { name: 'erase' }).click()
-  await dragRows(page, placement, 0, 23)
+  await dragRows(page, placement, 0, 12)
   await expect(placement.locator('[data-testid^="block-"]')).toHaveCount(0)
 }
 
@@ -88,10 +89,22 @@ async function resizeBlockRows(page: Page, block: Loc, rows: number) {
 }
 
 /**
+ * The hand-editing tools sit behind a disclosure now that generating is the
+ * primary path, so anything touching them has to open it first.
+ */
+async function openEditTools(page: Page) {
+  if (await page.getByRole('button', { name: 'erase' }).isHidden()) {
+    await page.getByText('Edit by hand').click()
+  }
+  await expect(page.getByRole('button', { name: 'erase' })).toBeVisible()
+}
+
+/**
  * Add a lane and wait for it to actually exist. `expected` is the resulting
  * number of lanes — counting first would race the grid's own first render.
  */
 async function addColumn(page: Page, expected: number) {
+  await openEditTools(page)
   await expect(page.getByRole('button', { name: '+ Add class' })).toHaveCount(expected - 1)
   await page.getByRole('button', { name: '+ Add column' }).click()
   await expect(page.getByRole('button', { name: '+ Add class' })).toHaveCount(expected)
@@ -99,7 +112,7 @@ async function addColumn(page: Page, expected: number) {
 
 // First-run smoke test: create the admin account, then walk the guided
 // setup wizard end to end and land on the new session's schedule grid.
-test('first run: admin account, then set the gym up from the normal pages', async ({ page }) => {
+test('first run: enter the gym structure, then generate from it', async ({ page }) => {
   await page.goto('/')
 
   // Fresh database → admin account creation.
@@ -114,23 +127,54 @@ test('first run: admin account, then set the gym up from the normal pages', asyn
   await page.getByRole('link', { name: 'Start with events' }).click()
   await expect(page).toHaveURL(/\/events$/)
 
-  // Events.
-  for (const name of ['Vault', 'Beam']) {
+  // Events are facility-wide. Warm-up is open mat space (no limit); the
+  // Tumble Trak takes one class at a time, which is what makes this a
+  // puzzle worth generating.
+  for (const [name, limit] of [
+    ['Warm-up', ''],
+    ['Tumble Trak', '1'],
+    ['Vault', '1'],
+    ['Beam', '1'],
+  ] as const) {
     await page.getByLabel('Event name').fill(name)
+    await page.getByLabel(/Class limit/).fill(limit)
     await page.getByRole('button', { name: 'Save' }).first().click()
     await expect(page.getByText(name, { exact: true })).toBeVisible()
   }
 
-  // A class, with a required event and the live fit summary.
-  await page.getByRole('link', { name: 'Classes' }).click()
-  await page.getByLabel('Class name').fill('Level 3 Girls')
-  await page.getByRole('button', { name: '+ Add event' }).click()
-  await expect(page.getByText('Total required: 30 min')).toBeVisible()
-  await page.getByLabel('duration in minutes').fill('45')
-  await expect(page.getByText('Total required: 45 min')).toBeVisible()
-  await page.getByLabel('duration in minutes').fill('30')
+  // A program, on its own clock.
+  await page.getByRole('link', { name: 'Programs' }).click()
+  await expect(page).toHaveURL(/\/programs$/)
+  await page.getByLabel('Program name').fill('Preschool')
+  await page.getByLabel('default start time').fill('16:00')
+  await page.getByLabel('default end time').fill('17:00')
   await page.getByRole('button', { name: 'Save' }).first().click()
-  await expect(page.getByText('Level 3 Girls', { exact: true })).toBeVisible()
+  await expect(page.getByText('2 classes · 16:00–17:00')).toBeHidden()
+  await expect(page.getByText('Preschool', { exact: true })).toBeVisible()
+
+  // Two classes in it. Each warms up first, and both want the one Trak.
+  await page.getByRole('link', { name: 'Classes' }).click()
+  await expect(page).toHaveURL(/\/classes$/)
+  for (const name of ['Tiny Tot 1', 'Tiny Tot 2']) {
+    const form = page.locator('form').first()
+    await form.getByLabel('Class name').fill(name)
+    await form.getByRole('button', { name: '+ Add event' }).click()
+    await form.getByRole('button', { name: '+ Add event' }).click()
+    await form.getByRole('combobox', { name: 'event' }).nth(0).selectOption({ label: 'Warm-up' })
+    await form.getByLabel('duration in minutes').nth(0).fill('15')
+    await form.getByRole('combobox', { name: 'position' }).nth(0).selectOption('FIRST')
+    await form
+      .getByRole('combobox', { name: 'event' })
+      .nth(1)
+      .selectOption({ label: 'Tumble Trak' })
+    await form.getByLabel('duration in minutes').nth(1).fill('15')
+    // 30 min of events against Preschool's 60-min clock — visible before
+    // ever hitting Generate.
+    await expect(page.getByText('Total required: 30 min')).toBeVisible()
+    await expect(page.getByText(/Window 16:00–17:00 .* fits with 30 min spare/)).toBeVisible()
+    await form.getByRole('button', { name: 'Save' }).click()
+    await expect(page.getByText(name, { exact: true })).toBeVisible()
+  }
 
   // A coach.
   await page.getByRole('link', { name: 'Coaches' }).click()
@@ -138,22 +182,94 @@ test('first run: admin account, then set the gym up from the normal pages', asyn
   await page.getByRole('button', { name: 'Save' }).first().click()
   await expect(page.getByText('Dana Marsh', { exact: true })).toBeVisible()
 
-  // A session on a specific date, seeded with the class.
+  // A session, and gather the program into it.
   await page.getByRole('link', { name: 'Sessions' }).click()
   await page.getByLabel(/session name/i).fill('Monday Practice')
   await page.getByLabel('Date').fill('2026-03-02')
-  await expect(page.getByText('Monday, March 2, 2026')).toBeVisible()
-  await page.getByRole('button', { name: 'Level 3 Girls' }).click()
   await page.getByRole('button', { name: 'Save' }).first().click()
   await expect(page.getByText(/Monday, March 2, 2026/)).toBeVisible()
 
-  // Home lists it; open its grid.
   await page.getByRole('link', { name: 'Home' }).click()
-  await expect(page.getByText('Your sessions')).toBeVisible()
   await page.getByRole('link', { name: /Monday Practice/ }).click()
   await expect(page.getByRole('heading', { name: 'Monday Practice' })).toBeVisible()
-  // The class it was created with landed in its own lane, full window.
-  await expect(page.getByText('Level 3 Girls 16:00–18:00')).toBeVisible()
+  await page.getByRole('button', { name: 'Add whole program' }).click()
+
+  // Both classes land on their program's clock, and — because they run at
+  // the same time — take a lane each.
+  await expect(page.getByText('Tiny Tot 1 16:00–17:00')).toBeVisible()
+  await expect(page.getByText('Tiny Tot 2 16:00–17:00')).toBeVisible()
+})
+
+test('Generate builds the whole rotation from the structure', async ({ page }) => {
+  await login(page)
+  await page.goto('/sessions/1/schedule')
+  await expect(page.getByText('Tiny Tot 1 16:00–17:00')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Generate schedule' }).click()
+
+  // Every class got all of its events, without anyone painting anything.
+  const lanes = page.locator('[data-testid^="placement-"]')
+  await expect(lanes).toHaveCount(2)
+  for (const i of [0, 1]) {
+    await expect(lanes.nth(i).locator('[data-testid^="block-"]')).toHaveCount(2)
+  }
+
+  // The warm-up anchor holds: it is the first thing each class does.
+  for (const i of [0, 1]) {
+    await expect(lanes.nth(i).locator('[data-testid^="block-"]').first()).toContainText('Warm-up')
+  }
+
+  // The core constraint: the capacity-1 Trak is never double-booked. Both
+  // classes need it in the same hour, so the generator had to stagger them.
+  const traks = page.locator('[data-testid^="block-"]').filter({ hasText: 'Tumble Trak' })
+  await expect(traks).toHaveCount(2)
+  const boxes = await Promise.all([0, 1].map(async (i) => (await traks.nth(i).boundingBox())!))
+  const [a, b] = boxes.sort((x, y) => x.y - y.y)
+  expect(a!.y + a!.height).toBeLessThanOrEqual(Math.round(b!.y) + 1)
+
+  // And it survives a reload — Generate wrote.
+  await page.reload()
+  await expect(page.locator('[data-testid^="block-"]')).toHaveCount(4)
+})
+
+test('Generate explains an over-subscribed shared event instead of failing silently', async ({
+  page,
+}) => {
+  // Regenerating over existing blocks asks first; say yes.
+  page.on('dialog', (d) => void d.accept())
+  await login(page)
+  // Make both classes want the whole hour on the one Trak: impossible.
+  await page.goto('/classes')
+  for (const name of ['Tiny Tot 1', 'Tiny Tot 2']) {
+    const row = page.getByRole('listitem').filter({ hasText: name })
+    await row.getByRole('button', { name: 'Edit' }).click()
+    const form = page
+      .getByRole('listitem')
+      .filter({ has: page.getByRole('button', { name: 'Cancel' }) })
+    await form.getByLabel('duration in minutes').nth(1).fill('60')
+    await form.getByRole('button', { name: 'Save' }).click()
+    await expect(page.getByText(name, { exact: true })).toBeVisible()
+  }
+
+  await page.goto('/sessions/1/schedule')
+  await page.getByRole('button', { name: 'Generate schedule' }).click()
+
+  // Named, specific, and about the event that is actually the problem.
+  await expect(page.getByText("Couldn't generate")).toBeVisible()
+  await expect(page.getByText(/Tumble Trak is over-subscribed: 2 classes need 120 min/)).toBeVisible()
+
+  // Put it back for the tests that follow.
+  await page.goto('/classes')
+  for (const name of ['Tiny Tot 1', 'Tiny Tot 2']) {
+    const row = page.getByRole('listitem').filter({ hasText: name })
+    await row.getByRole('button', { name: 'Edit' }).click()
+    const form = page
+      .getByRole('listitem')
+      .filter({ has: page.getByRole('button', { name: 'Cancel' }) })
+    await form.getByLabel('duration in minutes').nth(1).fill('15')
+    await form.getByRole('button', { name: 'Save' }).click()
+    await expect(page.getByText(name, { exact: true })).toBeVisible()
+  }
 })
 
 test('place classes into a lane with their own windows, stacked in time', async ({ page }) => {
@@ -168,10 +284,10 @@ test('place classes into a lane with their own windows, stacked in time', async 
   }
 
   await page.goto('/sessions/1/schedule')
-  await addColumn(page, 2)
+  await addColumn(page, 3)
 
   // LV 1 takes the first hour of the new lane…
-  await page.getByRole('button', { name: '+ Add class' }).nth(1).click()
+  await page.getByRole('button', { name: '+ Add class' }).nth(2).click()
   await page.getByRole('combobox', { name: 'Class' }).selectOption({ label: 'LV 1' })
   await page.getByLabel('class starts').fill('16:00')
   await page.getByLabel('class ends').fill('17:00')
@@ -179,7 +295,7 @@ test('place classes into a lane with their own windows, stacked in time', async 
   await expect(page.getByText('LV 1 16:00–17:00')).toBeVisible()
 
   // …and LV 2 stacks directly after it in the SAME lane.
-  await page.getByRole('button', { name: '+ Add class' }).nth(1).click()
+  await page.getByRole('button', { name: '+ Add class' }).nth(2).click()
   await page.getByRole('combobox', { name: 'Class' }).selectOption({ label: 'LV 2' })
   await page.getByLabel('class starts').fill('17:00')
   await page.getByLabel('class ends').fill('18:00')
@@ -194,9 +310,9 @@ test('a column holds one class at a time — overlaps are rejected', async ({ pa
   await login(page)
   await page.goto('/sessions/1/schedule')
 
-  // LV 1 already runs 16:00–17:00 in column 2; try to overlap it.
-  await page.getByRole('button', { name: '+ Add class' }).nth(1).click()
-  await page.getByRole('combobox', { name: 'Class' }).selectOption({ label: 'Level 3 Girls' })
+  // LV 1 already runs 16:00–17:00 in that lane; try to overlap it.
+  await page.getByRole('button', { name: '+ Add class' }).nth(2).click()
+  await page.getByRole('combobox', { name: 'Class' }).selectOption({ label: 'Tiny Tot 1' })
   await page.getByLabel('class starts').fill('16:30')
   await page.getByLabel('class ends').fill('17:30')
   await page.getByRole('button', { name: 'Add class', exact: true }).click()
@@ -204,7 +320,7 @@ test('a column holds one class at a time — overlaps are rejected', async ({ pa
   // Refused, and said so — the placement is not created.
   await expect(page.getByText(/column .* holds one class at a time/i)).toBeVisible()
   await page.getByRole('button', { name: 'Cancel' }).click()
-  await expect(page.getByText('Level 3 Girls 16:30–17:30')).not.toBeVisible()
+  await expect(page.getByText('Tiny Tot 1 16:30–17:30')).not.toBeVisible()
 })
 
 test('blank cells show outside a class window, never a forced fill', async ({ page }) => {
@@ -213,8 +329,8 @@ test('blank cells show outside a class window, never a forced fill', async ({ pa
 
   // LV 1 runs 16:00–17:00 and LV 2 runs 17:00–18:00, so their lane is
   // covered — but a class placed on a partial window leaves real blanks.
-  await addColumn(page, 3)
-  await page.getByRole('button', { name: '+ Add class' }).nth(2).click()
+  await addColumn(page, 4)
+  await page.getByRole('button', { name: '+ Add class' }).nth(3).click()
   await page.getByRole('combobox', { name: 'Class' }).selectOption({ label: 'LV 1' })
   await page.getByLabel('class starts').fill('17:00')
   await page.getByLabel('class ends').fill('17:30')
@@ -239,7 +355,7 @@ test('drag to paint an event across several 5-minute blocks', async ({ page }) =
   await login(page)
   await page.goto('/sessions/1/schedule')
 
-  // Level 3 Girls runs the whole session in column 1.
+  // Tiny Tot 1 runs 16:00–17:00 in the first lane.
   const lane = page.locator('[data-testid^="placement-"]').first()
   await clearLane(page, lane)
 
@@ -329,14 +445,18 @@ test('dragging a block edge resizes it, snapping to 5 minutes', async ({ page })
   await dragRows(page, lane, 2, 6) // 16:10–16:30
 
   const beam = lane.locator('[data-testid^="block-"]').first()
+  await expect(beam).toBeVisible()
   const before = (await beam.boundingBox())!
+  const laneBefore = (await lane.boundingBox())!
   await resizeBlockRows(page, beam, 3)
 
   await page.reload()
   const after = (await lane.locator('[data-testid^="block-"]').first().boundingBox())!
+  const laneAfter = (await lane.boundingBox())!
   expect(Math.round(after.height)).toBe(Math.round(before.height) + 3 * ROW_H)
-  // The top edge did not move — a resize is not a move.
-  expect(Math.round(after.y)).toBe(Math.round(before.y))
+  // The top edge did not move — a resize is not a move. Measured against
+  // the lane, since a reload closes the edit disclosure and shifts the page.
+  expect(Math.round(after.y - laneAfter.y)).toBe(Math.round(before.y - laneBefore.y))
 })
 
 test('a resize stops at the neighbouring block instead of eating it', async ({ page }) => {
@@ -350,13 +470,16 @@ test('a resize stops at the neighbouring block instead of eating it', async ({ p
   await dragRows(page, lane, 8, 12) // 16:40–17:00
 
   const blocks = lane.locator('[data-testid^="block-"]')
-  const neighbourTop = (await blocks.nth(1).boundingBox())!.y
   await resizeBlockRows(page, blocks.first(), 20)
 
   await page.reload()
   await expect(lane.locator('[data-testid^="block-"]')).toHaveCount(2)
-  const grown = (await lane.locator('[data-testid^="block-"]').first().boundingBox())!
-  expect(Math.round(grown.y + grown.height)).toBe(Math.round(neighbourTop))
+  // The edge stopped exactly where the neighbour begins. Lane-relative,
+  // because a reload closes the edit disclosure and shifts the page.
+  const laneBox = (await lane.boundingBox())!
+  const grown = (await blocks.first().boundingBox())!
+  const neighbour = (await blocks.nth(1).boundingBox())!
+  expect(Math.round(grown.y + grown.height - laneBox.y)).toBe(Math.round(neighbour.y - laneBox.y))
 })
 
 test('a block can be deleted from the block itself', async ({ page }) => {
@@ -365,6 +488,7 @@ test('a block can be deleted from the block itself', async ({ page }) => {
   const lane = page.locator('[data-testid^="placement-"]').first()
   await expect(lane.locator('[data-testid^="block-"]')).toHaveCount(2)
 
+  await openEditTools(page)
   const saved = saveOf(page)
   await lane.locator('[data-testid^="block-"]').last().hover()
   await lane.getByRole('button', { name: /^delete / }).last().click()
@@ -380,14 +504,16 @@ test('erase clears a span', async ({ page }) => {
   const lane = page.locator('[data-testid^="placement-"]').first()
   await expect(lane.locator('[data-testid^="block-"]')).toHaveCount(1)
 
+  await openEditTools(page)
   await page.getByRole('button', { name: 'erase' }).click()
-  await dragRows(page, lane, 0, 23)
+  await dragRows(page, lane, 0, 12)
 
   await page.reload()
   await expect(lane.locator('[data-testid^="block-"]')).toHaveCount(0)
 })
 
 test('generate, mark the coach absent, repair with a summary', async ({ page }) => {
+  page.on('dialog', (d) => void d.accept())
   await login(page)
 
   // Give the class its coach so generated blocks are staffed.
@@ -403,7 +529,7 @@ test('generate, mark the coach absent, repair with a summary', async ({ page }) 
   await editRow.getByRole('button', { name: 'Save' }).click()
 
   await page.goto('/sessions/1/schedule')
-  await page.getByRole('button', { name: 'Generate', exact: true }).click()
+  await page.getByRole('button', { name: 'Generate schedule' }).click()
   // A generated block, staffed — not the coach's chip in the day-of panel.
   await expect(
     page.locator('[data-testid^="block-"]').filter({ hasText: 'Dana Marsh' }).first(),
@@ -417,8 +543,9 @@ test('generate, mark the coach absent, repair with a summary', async ({ page }) 
   // Repair keeps placements and explains the coach change.
   await page.getByRole('button', { name: 'Repair schedule' }).click()
   await expect(page.getByText('Schedule repaired')).toBeVisible()
-  await expect(page.getByText(/Dana Marsh is out/)).toBeVisible()
-  await expect(page.getByText(/currently has no coach/)).toBeVisible()
+  // Both classes are hers, so both are named.
+  await expect(page.getByText(/Dana Marsh is out/).first()).toBeVisible()
+  await expect(page.getByText(/currently has no coach/).first()).toBeVisible()
 })
 
 test('print view renders lanes, class windows, and per-class strips', async ({ page }) => {

@@ -7,6 +7,7 @@ import { Dashboard } from './pages/Dashboard.tsx'
 import { EventsPage } from './pages/EventsPage.tsx'
 import { CoachesPage } from './pages/CoachesPage.tsx'
 import { ClassesPage } from './pages/ClassesPage.tsx'
+import { ProgramsPage } from './pages/ProgramsPage.tsx'
 import { SessionsPage } from './pages/SessionsPage.tsx'
 import { SchedulePage } from './pages/SchedulePage.tsx'
 import { PrintPage } from './pages/PrintPage.tsx'
@@ -29,6 +30,7 @@ function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/events" element={<EventsPage />} />
             <Route path="/coaches" element={<CoachesPage />} />
+            <Route path="/programs" element={<ProgramsPage />} />
             <Route path="/classes" element={<ClassesPage />} />
             <Route path="/sessions" element={<SessionsPage />} />
             <Route path="/sessions/:id/schedule" element={<KeyedSchedulePage />} />

@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import type { DatabaseSync } from 'node:sqlite'
 import type { EventBlock, Placement, Schedule } from '../../shared/types.ts'
-import { isSnapped, overlaps, parseTime } from '../../shared/slots.ts'
+import { SLOT_MINUTES, isSnapped, overlaps, parseTime } from '../../shared/slots.ts'
 import { ApiError, asObject, idParam, reqBool, reqInt } from '../validate.ts'
 import { withTransaction } from '../tx.ts'
 
@@ -179,6 +179,45 @@ function parseSchedule(
   return placements
 }
 
+/**
+ * The window a class runs on in a session: its own clock, else its
+ * program's, else the session's. Clamped to the session, because a class
+ * that starts before the doors open is not a thing.
+ */
+function windowFor(
+  cls: { default_start_time: string | null; default_end_time: string | null; program_id: number | null },
+  program: { default_start_time: string | null; default_end_time: string | null } | undefined,
+  session: { startMin: number; endMin: number },
+): { startMin: number; endMin: number } {
+  const pick = (a: string | null, b: string | null | undefined) => a ?? b ?? null
+  const start = pick(cls.default_start_time, program?.default_start_time)
+  const end = pick(cls.default_end_time, program?.default_end_time)
+  const startMin = start === null ? session.startMin : (parseTime(start) ?? session.startMin)
+  const endMin = end === null ? session.endMin : (parseTime(end) ?? session.endMin)
+  return {
+    startMin: Math.max(startMin, session.startMin),
+    endMin: Math.min(endMin, session.endMin),
+  }
+}
+
+/**
+ * First column whose classes never overlap this window — so classes that
+ * follow each other share a lane, and only genuinely simultaneous ones take
+ * a column each. Without this a 16-class session would be 16 columns wide.
+ */
+function packColumn(
+  taken: { columnIndex: number; startMin: number; endMin: number }[],
+  startMin: number,
+  endMin: number,
+): number {
+  for (let c = 0; ; c++) {
+    const clash = taken.some(
+      (t) => t.columnIndex === c && overlaps(t.startMin, t.endMin, startMin, endMin),
+    )
+    if (!clash) return c
+  }
+}
+
 export function scheduleRoutes(db: DatabaseSync): Router {
   const router = Router()
 
@@ -197,6 +236,105 @@ export function scheduleRoutes(db: DatabaseSync): Router {
   router.get('/sessions/:id/schedule', (req, res) => {
     const sessionId = idParam(req.params.id)
     sessionOr404(sessionId)
+    res.json({ schedule: loadSchedule(db, sessionId) })
+  })
+
+  /**
+   * Set which classes attend. This is the step before Generate: it gives
+   * every class a window (its own clock, else its program's, else the
+   * session's) and packs them into lanes. Classes already placed keep the
+   * window and painted work they have — re-gathering must not silently
+   * throw away edits.
+   */
+  router.put('/sessions/:id/classes', (req, res) => {
+    const sessionId = idParam(req.params.id)
+    const row = db
+      .prepare('SELECT start_time, end_time FROM sessions WHERE id = ?')
+      .get(sessionId) as { start_time: string; end_time: string } | undefined
+    if (!row) throw new ApiError(404, 'session not found')
+    const session = {
+      startMin: parseTime(row.start_time) ?? 0,
+      endMin: parseTime(row.end_time) ?? 0,
+    }
+
+    const obj = asObject(req.body)
+    if (!Array.isArray(obj.classIds)) throw new ApiError(400, 'classIds must be an array')
+    const wanted = obj.classIds.map((id) => reqInt(id, 'classIds', 1, MAX_ID))
+
+    const classes = db
+      .prepare(
+        `SELECT id, name, program_id, default_start_time, default_end_time FROM groups`,
+      )
+      .all() as {
+      id: number
+      name: string
+      program_id: number | null
+      default_start_time: string | null
+      default_end_time: string | null
+    }[]
+    const byId = new Map(classes.map((c) => [c.id, c]))
+    for (const id of wanted) {
+      if (!byId.has(id)) throw new ApiError(400, `class #${id} no longer exists`)
+    }
+    const programs = new Map(
+      (
+        db.prepare('SELECT id, default_start_time, default_end_time FROM programs').all() as {
+          id: number
+          default_start_time: string | null
+          default_end_time: string | null
+        }[]
+      ).map((p) => [p.id, p]),
+    )
+
+    withTransaction(db, () => {
+      const existing = db
+        .prepare(
+          'SELECT id, class_id, column_index, start_min, end_min FROM placements WHERE session_id = ?',
+        )
+        .all(sessionId) as {
+        id: number
+        class_id: number
+        column_index: number
+        start_min: number
+        end_min: number
+      }[]
+      const keep = new Set(wanted)
+      for (const p of existing) {
+        if (!keep.has(p.class_id)) {
+          db.prepare('DELETE FROM placements WHERE id = ?').run(p.id)
+        }
+      }
+
+      const taken = existing
+        .filter((p) => keep.has(p.class_id))
+        .map((p) => ({ columnIndex: p.column_index, startMin: p.start_min, endMin: p.end_min }))
+      const already = new Set(taken.length ? existing.filter((p) => keep.has(p.class_id)).map((p) => p.class_id) : [])
+      const insert = db.prepare(
+        'INSERT INTO placements (session_id, class_id, column_index, start_min, end_min) VALUES (?, ?, ?, ?, ?)',
+      )
+      for (const classId of wanted) {
+        if (already.has(classId)) continue
+        const cls = byId.get(classId)!
+        const w = windowFor(
+          cls,
+          cls.program_id === null ? undefined : programs.get(cls.program_id),
+          session,
+        )
+        if (w.endMin - w.startMin < SLOT_MINUTES) {
+          throw new ApiError(
+            400,
+            `${cls.name}'s window falls outside this session — check its program's default times`,
+          )
+        }
+        const columnIndex = packColumn(taken, w.startMin, w.endMin)
+        insert.run(sessionId, classId, columnIndex, w.startMin, w.endMin)
+        taken.push({ columnIndex, startMin: w.startMin, endMin: w.endMin })
+      }
+
+      const columnCount = taken.reduce((max, t) => Math.max(max, t.columnIndex + 1), 0)
+      db.prepare('UPDATE sessions SET column_count = ? WHERE id = ?').run(columnCount, sessionId)
+    })
+
     res.json({ schedule: loadSchedule(db, sessionId) })
   })
 

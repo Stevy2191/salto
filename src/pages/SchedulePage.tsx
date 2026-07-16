@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import type { Coach, GymClass, GymEvent, Schedule, Session, Settings } from '../../shared/types.ts'
+import type {
+  Coach,
+  GymClass,
+  GymEvent,
+  Program,
+  Schedule,
+  Session,
+  Settings,
+} from '../../shared/types.ts'
 import {
   SLOT_MINUTES,
   formatRange,
@@ -40,6 +48,7 @@ import { Button, Card, ChipPicker, ErrorNote, FieldGroup } from '../components/u
 import { CopySessionDialog } from '../components/CopySessionDialog.tsx'
 import { ROW_H, laneBackground, laneHeight, minToY, spanHeight, yToMin } from './schedule/grid.ts'
 import { AddClassDialog, PlacementDialog } from './schedule/dialogs.tsx'
+import { Attending } from './schedule/Attending.tsx'
 
 type SaveState = 'saved' | 'saving' | 'error'
 
@@ -96,6 +105,7 @@ export function SchedulePage() {
   const scheduleLoad = useLoad(() =>
     apiGet<{ schedule: Schedule }>(`/api/sessions/${sessionId}/schedule`),
   )
+  const programsLoad = useLoad(() => apiGet<{ programs: Program[] }>('/api/programs'))
   const settingsLoad = useLoad(() => apiGet<{ settings: Settings }>('/api/settings'))
 
   const [schedule, setSchedule] = useState<Schedule | null>(null)
@@ -110,6 +120,7 @@ export function SchedulePage() {
   const [copyOpen, setCopyOpen] = useState(false)
   const [addingTo, setAddingTo] = useState<number | null>(null)
   const [editingPlacement, setEditingPlacement] = useState<number | null>(null)
+  const [gathering, setGathering] = useState(false)
 
   useEffect(() => {
     if (scheduleLoad.data) setSchedule(scheduleLoad.data.schedule)
@@ -122,6 +133,7 @@ export function SchedulePage() {
   const events = eventsLoad.data?.events ?? []
   const classes = classesLoad.data?.classes ?? []
   const coaches = coachesLoad.data?.coaches ?? []
+  const programs = programsLoad.data?.programs ?? []
   const activeEvents = useMemo(() => events.filter((e) => e.active), [events])
 
   // Default the brush to the first event so painting is one click away.
@@ -157,6 +169,26 @@ export function SchedulePage() {
     },
     [sessionId],
   )
+
+  /**
+   * Set who is in this session. The server gives each class its window and
+   * packs the lanes; classes already here keep whatever was edited.
+   */
+  const setAttending = async (classIds: number[]) => {
+    setGathering(true)
+    try {
+      const res = await apiPut<{ schedule: Schedule }>(`/api/sessions/${sessionId}/classes`, {
+        classIds,
+      })
+      setSchedule(res.schedule)
+      setSaveError(null)
+      await sessionLoad.reload()
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'could not set the classes')
+    } finally {
+      setGathering(false)
+    }
+  }
 
   const setColumns = async (next: number) => {
     const previous = columnCount
@@ -276,6 +308,7 @@ export function SchedulePage() {
     classesLoad.error ??
     coachesLoad.error ??
     scheduleLoad.error ??
+    programsLoad.error ??
     settingsLoad.error
   if (loadError) return <ErrorNote message={loadError} />
   if (!session || !schedule || !conflicts) return null
@@ -573,9 +606,50 @@ export function SchedulePage() {
 
       <ErrorNote message={saveError} />
 
-      {/* The brush. Painting is the primary way a schedule gets built, so
-          the palette sits directly above the grid, always visible. */}
-      <div className="flex flex-wrap items-center gap-2 rounded-xl bg-white p-3 ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700">
+      {/* Step 1: who is in this session. */}
+      <div className="rounded-xl bg-white p-4 ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700">
+        <h2 className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
+          Classes attending
+          <span className="ml-2 font-normal text-slate-500 dark:text-slate-400">
+            each runs on its own clock — its times, else its program's, else the whole session
+          </span>
+        </h2>
+        <Attending
+          programs={programs}
+          classes={classes}
+          schedule={schedule}
+          busy={gathering}
+          onChange={(ids) => void setAttending(ids)}
+        />
+      </div>
+
+      {/* Step 2: generate. This is how a schedule is made; the palette
+          below is for touching up what comes out. */}
+      <div className="flex flex-wrap items-center gap-3 rounded-xl bg-indigo-50 p-4 ring-1 ring-indigo-200 dark:bg-indigo-950 dark:ring-indigo-800">
+        <Button onClick={generate} disabled={schedule.placements.length === 0}>
+          Generate schedule
+        </Button>
+        {schedule.placements.some((p) => p.blocks.length > 0) && (
+          <Button variant="secondary" onClick={generate} title="Regenerate with a new seed">
+            Shuffle
+          </Button>
+        )}
+        <p className="flex-1 text-sm text-indigo-900 dark:text-indigo-100">
+          {schedule.placements.length === 0
+            ? 'Add the classes attending, then generate their rotation.'
+            : 'Builds the whole rotation from each class’s events, durations and order. Shuffle re-rolls for a different valid layout; locked blocks (🔒) are kept.'}
+        </p>
+      </div>
+
+      {/* Cleanup tools, secondary to generation. */}
+      <details className="rounded-xl bg-white p-3 ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700">
+        <summary className="cursor-pointer text-sm font-semibold text-slate-700 dark:text-slate-200">
+          Edit by hand
+          <span className="ml-2 font-normal text-slate-500 dark:text-slate-400">
+            tweak what was generated — drag a block to move it, its edge to resize
+          </span>
+        </summary>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
         <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Paint:</span>
         {activeEvents.map((event) => {
           const active = tool?.kind === 'paint' && tool.eventId === event.id
@@ -609,21 +683,11 @@ export function SchedulePage() {
         <span className="ml-auto text-xs text-slate-500 dark:text-slate-400">
           Drag empty rows to paint · drag a block to move it · drag its edge to resize
         </span>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-3">
-        {schedule.placements.length > 0 && (
-          <>
-            <Button onClick={generate}>Generate</Button>
-            <Button variant="secondary" onClick={generate} title="Regenerate with a new seed">
-              Shuffle
-            </Button>
-          </>
-        )}
         <Button variant="secondary" onClick={() => void setColumns(columnCount + 1)}>
           + Add column
         </Button>
-      </div>
+        </div>
+      </details>
 
       {repairSummary && (
         <div
