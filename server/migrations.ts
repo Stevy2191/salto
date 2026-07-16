@@ -1,7 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { EVENT_PALETTE } from '../shared/colors.ts'
 import { addDays, dayOfWeekOf, todayIsoDate } from '../shared/dates.ts'
-import { parseTime } from '../shared/slots.ts'
+import { formatTime, parseTime } from '../shared/slots.ts'
 
 // Schema changes are append-only migrations tracked via PRAGMA user_version.
 // NEVER edit an existing migration — deployed databases have already run it.
@@ -469,6 +469,57 @@ CREATE TABLE programs (
       // Existing placements are week 1 of their session's plan.
       db.exec('ALTER TABLE placements ADD COLUMN week INTEGER NOT NULL DEFAULT 1')
       db.exec('CREATE INDEX idx_placements_session_week ON placements(session_id, week)')
+    },
+  },
+  {
+    name: 'class-owned-schedule',
+    up: (db) => {
+      // Classes now own their schedule: which weekdays they meet and at what
+      // time. Sessions stop being dated events and become weekly slots keyed
+      // by (day_of_week, start_time), auto-derived from the classes.
+      db.exec("ALTER TABLE groups ADD COLUMN days_of_week TEXT NOT NULL DEFAULT '[]'")
+      db.exec('ALTER TABLE groups ADD COLUMN start_time TEXT')
+
+      // Derive each class's schedule from where it was placed. A class placed
+      // in dated sessions meets on those weekdays; its start time is the
+      // earliest window start it was given (classes ran the session clock, so
+      // this is the slot start). Classes never placed stay unscheduled.
+      const placementRows = db
+        .prepare(
+          `SELECT p.class_id AS classId, s.date AS date, MIN(p.start_min) AS startMin
+           FROM placements p JOIN sessions s ON s.id = p.session_id
+           GROUP BY p.class_id, s.date`,
+        )
+        .all() as { classId: number; date: string; startMin: number }[]
+      const days = new Map<number, Set<number>>()
+      const starts = new Map<number, number>()
+      for (const row of placementRows) {
+        ;(days.get(row.classId) ?? days.set(row.classId, new Set()).get(row.classId)!).add(
+          dayOfWeekOf(row.date),
+        )
+        const prev = starts.get(row.classId)
+        if (prev === undefined || row.startMin < prev) starts.set(row.classId, row.startMin)
+      }
+      const setClass = db.prepare('UPDATE groups SET days_of_week = ?, start_time = ? WHERE id = ?')
+      for (const [classId, dayset] of days) {
+        setClass.run(
+          JSON.stringify([...dayset].sort((a, b) => a - b)),
+          formatTime(starts.get(classId)!),
+          classId,
+        )
+      }
+
+      // Sessions gain the weekday of their old date, then shed the date. Their
+      // start_time already holds the slot start; reconciliation (runtime) will
+      // normalize names, end times, and column counts and drop any orphans.
+      db.exec('ALTER TABLE sessions ADD COLUMN day_of_week INTEGER NOT NULL DEFAULT 0')
+      const sessionRows = db.prepare('SELECT id, date FROM sessions').all() as {
+        id: number
+        date: string
+      }[]
+      const setSessionDay = db.prepare('UPDATE sessions SET day_of_week = ? WHERE id = ?')
+      for (const s of sessionRows) setSessionDay.run(dayOfWeekOf(s.date), s.id)
+      db.exec('ALTER TABLE sessions DROP COLUMN date')
     },
   },
 ]

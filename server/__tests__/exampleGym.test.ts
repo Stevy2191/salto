@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import request from 'supertest'
 import type { Express } from 'express'
 import type { GymClass, GymEvent, Program, Schedule, Session } from '../../shared/types.ts'
-import { isIsoDate, todayIsoDate } from '../../shared/dates.ts'
 import { isSnapped, overlaps, sessionWindow } from '../../shared/slots.ts'
 import { appWithAdmin } from './helpers.ts'
 
@@ -37,10 +36,11 @@ describe('example gym', () => {
     expect(events.some((e) => !e.shared)).toBe(true)
     expect(events.every((e) => isSnapped(e.duration) && e.duration > 0)).toBe(true)
 
-    // Sessions sit on real, upcoming dates, listed chronologically.
-    const today = todayIsoDate()
-    expect(sessions.every((s) => isIsoDate(s.date) && s.date >= today)).toBe(true)
-    expect([...sessions].sort((a, b) => a.date.localeCompare(b.date))).toEqual(sessions)
+    // Sessions are auto-derived weekly slots — the Monday and Wednesday 16:00
+    // slots the classes' schedules imply — labelled by day and time.
+    expect(sessions.map((s) => s.dayOfWeek).sort()).toEqual([1, 3])
+    expect(sessions.every((s) => s.startTime === '16:00')).toBe(true)
+    expect(sessions.map((s) => s.name).sort()).toEqual(['Monday 4:00 PM', 'Wednesday 4:00 PM'])
 
     // Referential integrity: classes are only eligible for seeded events, and
     // their warm-up/cool-down anchors point at seeded events too.

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import request from 'supertest'
 import type { Express } from 'express'
-import { appWithAdmin } from './helpers.ts'
+import { appWithAdmin, createClass, findSlot } from './helpers.ts'
 
 let app: Express
 let cookie: string
@@ -278,258 +278,132 @@ describe('classes CRUD', () => {
       .expect(400)
   })
 
-  it('deleting a class removes its placements from every session', async () => {
-    const cls = (
-      await request(app).post('/api/classes').set('Cookie', cookie).send({ name: 'L3' })
-    ).body.class
-    const session = (
-      await request(app)
-        .post('/api/sessions')
-        .set('Cookie', cookie)
-        .send({ date: '2026-03-02', startTime: '16:00', endTime: '18:00', classes: [cls.id] })
-    ).body.session
+  it('deleting the only class in a slot removes the derived session', async () => {
+    await createClass(app, cookie, {
+      name: 'L3',
+      daysOfWeek: [1],
+      startTime: '16:00',
+      periodMinutes: 60,
+    })
+    const slot = (await findSlot(app, cookie, 1, '16:00'))!
+    expect(slot).toBeTruthy()
 
+    const cls = (await request(app).get('/api/classes').set('Cookie', cookie)).body.classes[0]
     await request(app).delete(`/api/classes/${cls.id}`).set('Cookie', cookie).expect(204)
-    const { schedule } = (
-      await request(app).get(`/api/sessions/${session.id}/schedule`).set('Cookie', cookie)
-    ).body
-    expect(schedule.placements).toEqual([])
-    // The lane itself survives — the column is a place, not the class.
-    const after = await request(app).get(`/api/sessions/${session.id}`).set('Cookie', cookie)
-    expect(after.body.session.columnCount).toBe(1)
+    // The slot no class backs anymore is gone.
+    expect(await findSlot(app, cookie, 1, '16:00')).toBeUndefined()
   })
 })
 
-describe('sessions CRUD', () => {
-  it('creates a session with defaults', async () => {
-    const created = await request(app)
-      .post('/api/sessions')
-      .set('Cookie', cookie)
-      .send({ date: '2026-03-02', startTime: '16:00', endTime: '18:30' })
-      .expect(201)
-    expect(created.body.session).toMatchObject({
-      date: '2026-03-02',
-      startTime: '16:00',
-      endTime: '18:30',
-      columnCount: 0,
-    })
+describe('derived sessions', () => {
+  it('has no sessions until a class is scheduled', async () => {
+    const sessions = (await request(app).get('/api/sessions').set('Cookie', cookie)).body.sessions
+    expect(sessions).toEqual([])
   })
 
-  it('seeds a column per class when created with classes', async () => {
-    const a = (await request(app).post('/api/classes').set('Cookie', cookie).send({ name: 'LV 1' }))
-      .body.class.id
-    const b = (await request(app).post('/api/classes').set('Cookie', cookie).send({ name: 'LV 2' }))
-      .body.class.id
+  it('cannot be created by hand — POST /sessions is gone', async () => {
+    await request(app)
+      .post('/api/sessions')
+      .set('Cookie', cookie)
+      .send({ startTime: '16:00', endTime: '18:00' })
+      .expect(404)
+  })
+
+  it('groups classes sharing a day and start into one slot, each its own column', async () => {
+    const a = await createClass(app, cookie, {
+      name: 'LV 1',
+      daysOfWeek: [1],
+      startTime: '17:00',
+      periodMinutes: 45,
+    })
+    const b = await createClass(app, cookie, {
+      name: 'LV 2',
+      daysOfWeek: [1],
+      startTime: '17:00',
+      periodMinutes: 60,
+    })
+    const slot = (await findSlot(app, cookie, 1, '17:00'))!
+    expect(slot.classCount).toBe(2)
+
     const session = (
-      await request(app)
-        .post('/api/sessions')
-        .set('Cookie', cookie)
-        .send({ date: '2026-03-02', startTime: '16:00', endTime: '18:00', classes: [a, b] })
-        .expect(201)
+      await request(app).get(`/api/sessions/${slot.id}`).set('Cookie', cookie)
     ).body.session
-    expect(session.columnCount).toBe(2)
+    expect(session).toMatchObject({
+      dayOfWeek: 1,
+      startTime: '17:00',
+      // The slot ends at the latest-ending class: 17:00 + 60 min.
+      endTime: '18:00',
+      columnCount: 2,
+      name: 'Monday 5:00 PM',
+    })
 
     const { schedule } = (
-      await request(app).get(`/api/sessions/${session.id}/schedule`).set('Cookie', cookie)
+      await request(app).get(`/api/sessions/${slot.id}/schedule`).set('Cookie', cookie)
     ).body
-    // Each class gets its own lane, running the whole window — what a fresh
-    // session used to mean before columns existed.
     expect(schedule.placements).toMatchObject([
-      { classId: a, columnIndex: 0, startMin: 960, endMin: 1080, blocks: [] },
-      { classId: b, columnIndex: 1, startMin: 960, endMin: 1080, blocks: [] },
+      { classId: a, columnIndex: 0, startMin: 17 * 60, endMin: 17 * 60 + 45, blocks: [] },
+      { classId: b, columnIndex: 1, startMin: 17 * 60, endMin: 17 * 60 + 60, blocks: [] },
     ])
   })
 
-  it('rejects a missing or unreal date', async () => {
-    for (const date of [undefined, '', 'Monday', '2026-3-2', '2026-02-31']) {
-      await request(app)
-        .post('/api/sessions')
-        .set('Cookie', cookie)
-        .send({ date, startTime: '16:00', endTime: '18:30' })
-        .expect(400)
-    }
+  it('splits a class meeting several days into a slot per day', async () => {
+    await createClass(app, cookie, {
+      name: 'LWM',
+      daysOfWeek: [1, 3],
+      startTime: '17:00',
+      periodMinutes: 45,
+    })
+    expect(await findSlot(app, cookie, 1, '17:00')).toBeTruthy()
+    expect(await findSlot(app, cookie, 3, '17:00')).toBeTruthy()
+    const sessions = (await request(app).get('/api/sessions').set('Cookie', cookie)).body.sessions
+    expect(sessions).toHaveLength(2)
   })
 
-  it('lists sessions chronologically, not by creation order', async () => {
-    const create = (date: string, startTime: string) =>
-      request(app)
-        .post('/api/sessions')
-        .set('Cookie', cookie)
-        .send({ date, startTime, endTime: '20:00' })
-        .expect(201)
-    // Deliberately out of order, including two on the same day.
-    await create('2026-03-09', '16:00')
-    await create('2026-03-02', '17:00')
-    await create('2026-03-02', '09:00')
-
-    const listed = (await request(app).get('/api/sessions').set('Cookie', cookie)).body.sessions
-    expect(listed.map((s: { date: string; startTime: string }) => [s.date, s.startTime])).toEqual([
-      ['2026-03-02', '09:00'],
-      ['2026-03-02', '17:00'],
-      ['2026-03-09', '16:00'],
-    ])
-  })
-
-  it('rejects a session window off the 5-minute axis', async () => {
+  it('moves a class between slots when its schedule changes, keeping a lock', async () => {
+    const id = await createClass(app, cookie, {
+      name: 'LV 1',
+      daysOfWeek: [1],
+      startTime: '16:00',
+      periodMinutes: 60,
+    })
+    const monday = (await findSlot(app, cookie, 1, '16:00'))!
+    // Change the class to meet Tuesdays instead.
     await request(app)
-      .post('/api/sessions')
+      .put(`/api/classes/${id}`)
       .set('Cookie', cookie)
-      .send({ date: '2026-03-03', startTime: '17:02', endTime: '19:00' })
-      .expect(400)
-  })
-
-  it('refuses to shrink a session window past its class placements', async () => {
-    const classId = (
-      await request(app).post('/api/classes').set('Cookie', cookie).send({ name: 'L3' })
-    ).body.class.id
-    const session = (
-      await request(app)
-        .post('/api/sessions')
-        .set('Cookie', cookie)
-        .send({ date: '2026-03-02', startTime: '16:00', endTime: '20:00', classes: [classId] })
-    ).body.session
-
-    const res = await request(app)
-      .put(`/api/sessions/${session.id}`)
-      .set('Cookie', cookie)
-      .send({ date: '2026-03-02', startTime: '16:00', endTime: '18:00' })
-      .expect(400)
-    expect(res.body.error).toMatch(/outside the new session window/)
-
-    // Widening is fine — nothing falls outside.
-    await request(app)
-      .put(`/api/sessions/${session.id}`)
-      .set('Cookie', cookie)
-      .send({ date: '2026-03-02', startTime: '15:00', endTime: '21:00' })
+      .send({ name: 'LV 1', daysOfWeek: [2], startTime: '16:00', periodMinutes: 60 })
       .expect(200)
+    expect(await findSlot(app, cookie, 1, '16:00')).toBeUndefined()
+    expect(await findSlot(app, cookie, 2, '16:00')).toBeTruthy()
+    void monday
   })
 
-  it('stores day-of outages separately from session edits', async () => {
-    const session = (
-      await request(app)
-        .post('/api/sessions')
-        .set('Cookie', cookie)
-        .send({ date: '2026-03-02', startTime: '16:00', endTime: '18:00' })
-    ).body.session
-    expect(session.absentCoaches).toEqual([])
-    expect(session.unavailableEvents).toEqual([])
-
+  it('stores day-of outages, untouched by reconciliation', async () => {
+    await createClass(app, cookie, {
+      name: 'L3',
+      daysOfWeek: [1],
+      startTime: '16:00',
+      periodMinutes: 60,
+    })
+    const slot = (await findSlot(app, cookie, 1, '16:00'))!
     const updated = await request(app)
-      .put(`/api/sessions/${session.id}/outages`)
+      .put(`/api/sessions/${slot.id}/outages`)
       .set('Cookie', cookie)
       .send({ absentCoaches: [3], unavailableEvents: [1, 2] })
       .expect(200)
     expect(updated.body.session.absentCoaches).toEqual([3])
     expect(updated.body.session.unavailableEvents).toEqual([1, 2])
 
-    // A normal session edit must not clear the outages.
-    await request(app)
-      .put(`/api/sessions/${session.id}`)
-      .set('Cookie', cookie)
-      .send({ name: 'Renamed', date: '2026-03-03', startTime: '16:00', endTime: '18:00' })
-      .expect(200)
-    const after = await request(app).get(`/api/sessions/${session.id}`).set('Cookie', cookie)
+    // Adding another class to the slot reconciles but keeps the outages.
+    await createClass(app, cookie, {
+      name: 'L4',
+      daysOfWeek: [1],
+      startTime: '16:00',
+      periodMinutes: 60,
+    })
+    const after = await request(app).get(`/api/sessions/${slot.id}`).set('Cookie', cookie)
     expect(after.body.session.absentCoaches).toEqual([3])
     expect(after.body.session.unavailableEvents).toEqual([1, 2])
-  })
-
-  it('copies a session, shifting the whole grid to the new start time', async () => {
-    const eventId = (
-      await request(app).post('/api/events').set('Cookie', cookie).send({ name: 'Vault' })
-    ).body.event.id
-    const classId = (
-      await request(app).post('/api/classes').set('Cookie', cookie).send({ name: 'L3' })
-    ).body.class.id
-    const source = (
-      await request(app)
-        .post('/api/sessions')
-        .set('Cookie', cookie)
-        .send({
-          name: 'Monday',
-          date: '2026-03-02',
-          startTime: '16:00',
-          endTime: '18:30',
-          classes: [classId],
-        })
-    ).body.session
-    // A class on a partial window with one painted, locked block.
-    await request(app)
-      .put(`/api/sessions/${source.id}/schedule`)
-      .set('Cookie', cookie)
-      .send({
-        placements: [
-          {
-            classId,
-            columnIndex: 0,
-            startMin: 960, // 16:00
-            endMin: 1050, // 17:30
-            blocks: [{ eventId, coachId: null, startMin: 960, endMin: 990, locked: true }],
-          },
-        ],
-      })
-      .expect(200)
-    await request(app)
-      .put(`/api/sessions/${source.id}/outages`)
-      .set('Cookie', cookie)
-      .send({ absentCoaches: [9], unavailableEvents: [] })
-      .expect(200)
-
-    const copy = (
-      await request(app)
-        .post(`/api/sessions/${source.id}/copy`)
-        .set('Cookie', cookie)
-        .send({ name: 'Thursday', date: '2026-03-05', startTime: '17:00' })
-        .expect(201)
-    ).body.session
-    // Same window length and columns, chosen date/time, no outages.
-    expect(copy).toMatchObject({
-      name: 'Thursday',
-      date: '2026-03-05',
-      startTime: '17:00',
-      endTime: '19:30',
-      columnCount: 1,
-      absentCoaches: [],
-      unavailableEvents: [],
-    })
-
-    // The grid came along shifted by the +1h start delta, and the copied
-    // block arrives unlocked so it can be regenerated over.
-    const { schedule } = (
-      await request(app).get(`/api/sessions/${copy.id}/schedule`).set('Cookie', cookie)
-    ).body
-    expect(schedule.placements).toMatchObject([
-      { classId, columnIndex: 0, startMin: 1020, endMin: 1110 },
-    ])
-    expect(schedule.placements[0].blocks).toMatchObject([
-      { eventId, coachId: null, startMin: 1020, endMin: 1050, locked: false },
-    ])
-  })
-
-  it('rejects a copy that would run past midnight', async () => {
-    const source = (
-      await request(app)
-        .post('/api/sessions')
-        .set('Cookie', cookie)
-        .send({ date: '2026-03-02', startTime: '16:00', endTime: '20:00' })
-    ).body.session
-    await request(app)
-      .post(`/api/sessions/${source.id}/copy`)
-      .set('Cookie', cookie)
-      .send({ date: '2026-03-03', startTime: '21:00' })
-      .expect(400)
-  })
-
-  it('rejects end before start and malformed times', async () => {
-    await request(app)
-      .post('/api/sessions')
-      .set('Cookie', cookie)
-      .send({ date: '2026-03-02', startTime: '18:00', endTime: '16:00' })
-      .expect(400)
-    await request(app)
-      .post('/api/sessions')
-      .set('Cookie', cookie)
-      .send({ date: '2026-03-02', startTime: '4pm', endTime: '18:00' })
-      .expect(400)
   })
 })
 

@@ -1,6 +1,9 @@
 // Pure calendar-date helpers shared by the server and the frontend.
-// Sessions are tied to specific dates ("YYYY-MM-DD"), not weekly slots —
-// Monday week 1 differs from Monday week 2.
+//
+// Classes carry weekday schedules (0 = Sunday … 6 = Saturday), and sessions
+// are auto-derived weekly slots labelled by day + start time. The remaining
+// "YYYY-MM-DD" helpers exist for the migration off the old dated-session
+// model and anywhere a real calendar day is still handled.
 
 export const DAY_NAMES = [
   'Sunday',
@@ -51,6 +54,22 @@ export function isIsoDate(value: string): boolean {
 /** Day of week for an ISO date: 0 = Sunday … 6 = Saturday. */
 export function dayOfWeekOf(isoDate: string): number {
   return parseIsoDate(isoDate)?.getUTCDay() ?? 0
+}
+
+/** "17:00" → "5:00 PM". Passes anything unparseable straight through. */
+export function formatTime12(hhmm: string): string {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(hhmm)
+  if (!match) return hhmm
+  let hour = Number(match[1])
+  const ampm = hour < 12 ? 'AM' : 'PM'
+  hour %= 12
+  if (hour === 0) hour = 12
+  return `${hour}:${match[2]} ${ampm}`
+}
+
+/** "Monday 5:00 PM" — the display label for an auto-derived session slot. */
+export function slotLabel(dayOfWeek: number, startTime: string): string {
+  return `${DAY_NAMES[dayOfWeek] ?? 'Day'} ${formatTime12(startTime)}`
 }
 
 export function toIsoDate(date: Date): string {

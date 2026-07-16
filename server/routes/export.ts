@@ -3,7 +3,7 @@ import ExcelJS from 'exceljs'
 import type { DatabaseSync } from 'node:sqlite'
 import { SLOT_MINUTES, formatRange, formatTime, rowCount, rowStartMin } from '../../shared/slots.ts'
 import { textColorFor } from '../../shared/colors.ts'
-import { formatDateLong, formatDateShort } from '../../shared/dates.ts'
+import { slotLabel } from '../../shared/dates.ts'
 import { PLAN_WEEKS } from '../../shared/types.ts'
 import type { Placement } from '../../shared/types.ts'
 import { ApiError, idParam } from '../validate.ts'
@@ -22,7 +22,7 @@ const medium = { style: 'medium' as const }
 interface SessionRow {
   id: number
   name: string
-  date: string
+  day_of_week: number
   start_time: string
   end_time: string
   column_count: number
@@ -61,13 +61,13 @@ export function exportRoutes(db: DatabaseSync): Router {
     const sessionId = idParam(req.params.id)
     const session = db
       .prepare(
-        'SELECT id, name, date, start_time, end_time, column_count FROM sessions WHERE id = ?',
+        'SELECT id, name, day_of_week, start_time, end_time, column_count FROM sessions WHERE id = ?',
       )
       .get(sessionId) as unknown as SessionRow | undefined
     if (!session) throw new ApiError(404, 'session not found')
 
     const window = { startTime: session.start_time, endTime: session.end_time }
-    const label = session.name || `${formatDateShort(session.date)} ${session.start_time}`
+    const label = session.name || slotLabel(session.day_of_week, session.start_time)
 
     const classNames = new Map(
       (db.prepare('SELECT id, name FROM groups').all() as { id: number; name: string }[]).map(
@@ -120,7 +120,7 @@ export function exportRoutes(db: DatabaseSync): Router {
 
     sheet.mergeCells(2, 1, 2, totalColumns)
     const subtitle = sheet.getCell(2, 1)
-    subtitle.value = `${formatDateLong(session.date)} · ${session.start_time}–${session.end_time}`
+    subtitle.value = `${slotLabel(session.day_of_week, session.start_time)} · ${session.start_time}–${session.end_time} · repeats weekly`
     subtitle.font = { size: 11, color: { argb: 'FF555555' } }
 
     // Row 3: column (lane) headers. A column is a lane, not a class, so it

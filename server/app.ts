@@ -6,6 +6,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import { csrfProtect, LoginRateLimiter, requireAuth } from './auth.ts'
 import { authRoutes } from './routes/auth.ts'
 import { entityRoutes } from './routes/entities.ts'
+import { sessionRoutes } from './routes/sessions.ts'
 import { scheduleRoutes } from './routes/schedule.ts'
 import { settingsRoutes } from './routes/settings.ts'
 import { exampleGymRoutes } from './routes/exampleGym.ts'
@@ -35,6 +36,7 @@ export function createApp(db: DatabaseSync, options: AppOptions = {}): express.E
   // Everything else under /api requires a logged-in admin.
   const protectedApi = express.Router()
   protectedApi.use(entityRoutes(db))
+  protectedApi.use(sessionRoutes(db))
   protectedApi.use(scheduleRoutes(db))
   protectedApi.use(settingsRoutes(db))
   protectedApi.use(exampleGymRoutes(db))

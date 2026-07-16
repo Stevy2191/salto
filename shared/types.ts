@@ -80,6 +80,17 @@ export interface GymClass {
   /** Higher priority wins when conflicts arise. */
   priority: number
   /**
+   * The days this class meets (0 = Sunday … 6 = Saturday). A class meeting
+   * Mon and Wed contributes to two derived session slots at the same time.
+   */
+  daysOfWeek: number[]
+  /**
+   * The clock time the class starts on each of its days, "HH:MM" 24h, or null
+   * if not scheduled yet. With daysOfWeek it fixes which slot the class is in;
+   * its window is startTime … startTime + periodMinutes.
+   */
+  startTime: string | null
+  /**
    * The subset of facility events this class may use. Each week the planner
    * draws from this list — the class does not visit all of them per period.
    */
@@ -109,19 +120,21 @@ export interface PeriodFit {
 
 export interface Session {
   id: number
+  /** Derived display label, e.g. "Monday 5:00 PM". */
   name: string
   /**
-   * The specific calendar day ("YYYY-MM-DD") this session happens —
-   * sessions are per-date, not weekly slots; copy a session to repeat it.
+   * The weekday this slot recurs on (0 = Sunday … 6 = Saturday). With
+   * startTime it identifies the slot; sessions are auto-derived from the
+   * classes meeting then, never created by hand or tied to a calendar date.
    */
-  date: string
-  /** Master window start, "HH:MM" 24h — the top of the time axis. */
+  dayOfWeek: number
+  /** Slot start, "HH:MM" 24h — the top of the time axis and the grouping key. */
   startTime: string
-  /** Master window end, "HH:MM" 24h. */
+  /** Slot end, "HH:MM" 24h — derived from the latest-ending class. */
   endTime: string
-  /** How many columns (lanes) the grid has. */
+  /** How many columns (lanes) the grid has — one per class in the slot. */
   columnCount: number
-  /** Read-only: how many distinct classes attend this session. */
+  /** Read-only: how many distinct classes meet in this slot. */
   classCount: number
   /** Which of the 4 weeks are locked (index 0 = week 1). */
   weekLocks: boolean[]

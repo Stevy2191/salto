@@ -3,7 +3,7 @@ import request from 'supertest'
 import ExcelJS from 'exceljs'
 import type { Express } from 'express'
 import type { Response } from 'superagent'
-import { appWithAdmin } from './helpers.ts'
+import { appWithAdmin, createClass, findSlot } from './helpers.ts'
 import { textColorFor } from '../../shared/colors.ts'
 
 let app: Express
@@ -58,27 +58,17 @@ beforeEach(async () => {
     (await request(app).post(path).set('Cookie', cookie).send(body)).body
 
   vaultId = (await post('/api/events', { name: 'Vault', color: VAULT_COLOR })).event.id
-  beamId = (await post('/api/events', { name: 'Beam', color: BEAM_COLOR, capacity: 2 })).event.id
+  beamId = (await post('/api/events', { name: 'Beam', color: BEAM_COLOR })).event.id
   coachId = (await post('/api/coaches', { name: 'Dana Marsh' })).coach.id
-  lv1 = (await post('/api/classes', { name: 'LV 1' })).class.id
-  lv2 = (await post('/api/classes', { name: 'LV 2' })).class.id
-  silver = (await post('/api/classes', { name: 'Xcel Silver' })).class.id
+  // Three classes on the Monday 16:00 slot span it 16:00–18:00 (period 120),
+  // giving three lanes. The grid PUT below then paints the arrangement the
+  // export assertions expect: lane 0 runs LV 1 then LV 2, lane 1 Xcel Silver.
+  const schedule = { daysOfWeek: [1], startTime: '16:00', periodMinutes: 120 }
+  lv1 = await createClass(app, cookie, { name: 'LV 1', ...schedule })
+  lv2 = await createClass(app, cookie, { name: 'LV 2', ...schedule })
+  silver = await createClass(app, cookie, { name: 'Xcel Silver', ...schedule })
+  sessionId = (await findSlot(app, cookie, 1, '16:00'))!.id
 
-  // A 16:00–18:00 session: lane 0 runs LV 1 then LV 2 back to back; lane 1
-  // runs Xcel Silver on a partial window that starts late.
-  sessionId = (
-    await post('/api/sessions', {
-      name: 'Monday Practice',
-      date: '2026-03-02',
-      startTime: '16:00',
-      endTime: '18:00',
-    })
-  ).session.id
-  await request(app)
-    .put(`/api/sessions/${sessionId}/columns`)
-    .set('Cookie', cookie)
-    .send({ columnCount: 2 })
-    .expect(200)
   await request(app)
     .put(`/api/sessions/${sessionId}/schedule`)
     .set('Cookie', cookie)
@@ -132,15 +122,15 @@ describe('Excel export', () => {
     expect(workbook.worksheets.map((w) => w.name)).toEqual(['Week 1', 'Week 2', 'Week 3', 'Week 4'])
     // Only week 1 was painted, so week 2's grid is empty of event blocks.
     const week2 = workbook.worksheets[1]!
-    expect(week2.getCell('A1').value).toBe('Monday Practice — Week 2')
+    expect(week2.getCell('A1').value).toBe('Monday 4:00 PM — Week 2')
   })
 
   it('lays lanes out as columns and time as 5-minute rows', async () => {
     const { res, sheet } = await downloadSheet()
-    expect(res.headers['content-disposition']).toContain('salto-monday-practice.xlsx')
+    expect(res.headers['content-disposition']).toContain('salto-monday-4-00-pm.xlsx')
 
-    expect(sheet.getCell('A1').value).toBe('Monday Practice — Week 1')
-    expect(String(sheet.getCell('A2').value)).toContain('Monday, March 2, 2026 · 16:00–18:00')
+    expect(sheet.getCell('A1').value).toBe('Monday 4:00 PM — Week 1')
+    expect(String(sheet.getCell('A2').value)).toContain('Monday 4:00 PM · 16:00–18:00')
 
     // A lane header names the classes it runs, in order — a column is a
     // lane, not a single class.

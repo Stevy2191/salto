@@ -104,7 +104,8 @@ describe('migration runner', () => {
     )
     for (let dow = 0; dow <= 6; dow++) insert.run(`Session ${dow}`, dow)
 
-    runMigrations(db)
+    // Stop at session-dates; a later migration reverts to weekday slots.
+    runMigrations(db, 6)
 
     const columns = (
       db.prepare("SELECT name FROM pragma_table_info('sessions')").all() as { name: string }[]
@@ -154,7 +155,8 @@ describe('migration runner', () => {
     // L5: a single locked slot.
     insert.run(0, 2, 2, null, 1)
 
-    runMigrations(db)
+    // Stop at the lane model — the migration under test here.
+    runMigrations(db, 7)
 
     // Old storage is gone; attendance and granularity now live in the grid.
     const sessionColumns = (
@@ -224,7 +226,8 @@ describe('migration runner', () => {
       'INSERT INTO assignments (session_id, slot_index, event_id, group_id) VALUES (1, 0, 1, 2)',
     ).run()
 
-    runMigrations(db)
+    // Stop at the lane model — the migration under test here.
+    runMigrations(db, 7)
 
     const placements = db
       .prepare('SELECT class_id, column_index FROM placements ORDER BY column_index')
@@ -293,7 +296,8 @@ describe('migration runner', () => {
       'INSERT INTO placements (session_id, class_id, column_index, start_min, end_min) VALUES (1, 1, 0, 960, 1080)',
     ).run()
 
-    runMigrations(db)
+    // Stop at rotation-plans — the migration under test here.
+    runMigrations(db, 9)
 
     // Events gain a duration (seeded from the shortest length seen) and a
     // shared flag mirrored from capacity.
@@ -343,5 +347,47 @@ describe('migration runner', () => {
   it('does not invent a program for a gym that has no classes', () => {
     const db = openDb(':memory:')
     expect(db.prepare('SELECT COUNT(*) AS n FROM programs').get()).toMatchObject({ n: 0 })
+  })
+
+  it('class-owned-schedule derives class weekdays/time and turns sessions into slots', () => {
+    const db = new DatabaseSync(':memory:')
+    db.exec('PRAGMA foreign_keys = ON')
+    // A deployment on the dated-session model, just before classes owned time.
+    runMigrations(db, 9)
+    db.prepare("INSERT INTO programs (name) VALUES ('General')").run()
+    db.prepare(
+      "INSERT INTO groups (name, program_id, period_minutes) VALUES ('LWM', 1, 45)",
+    ).run()
+    // The class was placed in a Monday and a Wednesday session, both at 16:00.
+    db.prepare(
+      `INSERT INTO sessions (name, date, start_time, end_time, column_count)
+       VALUES ('Mon', '2026-03-02', '16:00', '17:00', 1), ('Wed', '2026-03-04', '16:00', '17:00', 1)`,
+    ).run()
+    db.prepare(
+      `INSERT INTO placements (session_id, class_id, column_index, week, start_min, end_min)
+       VALUES (1, 1, 0, 1, 960, 1020), (2, 1, 0, 1, 960, 1020)`,
+    ).run()
+
+    runMigrations(db)
+
+    // The class now owns its schedule: it meets Monday and Wednesday at 16:00.
+    const cls = db
+      .prepare('SELECT days_of_week AS d, start_time AS t FROM groups WHERE id = 1')
+      .get() as { d: string; t: string }
+    expect(JSON.parse(cls.d)).toEqual([1, 3])
+    expect(cls.t).toBe('16:00')
+
+    // Sessions carry the weekday and have shed the calendar date.
+    const cols = (
+      db.prepare("SELECT name FROM pragma_table_info('sessions')").all() as { name: string }[]
+    ).map((c) => c.name)
+    expect(cols).toContain('day_of_week')
+    expect(cols).not.toContain('date')
+    expect(
+      (db.prepare('SELECT day_of_week AS d FROM sessions ORDER BY id').all() as { d: number }[]).map(
+        (r) => r.d,
+      ),
+    ).toEqual([1, 3])
+    expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
   })
 })

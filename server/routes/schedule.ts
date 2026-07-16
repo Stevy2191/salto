@@ -2,7 +2,7 @@ import { Router } from 'express'
 import type { DatabaseSync } from 'node:sqlite'
 import type { EventBlock, Placement, Schedule } from '../../shared/types.ts'
 import { PLAN_WEEKS } from '../../shared/types.ts'
-import { SLOT_MINUTES, isSnapped, overlaps, parseTime } from '../../shared/slots.ts'
+import { isSnapped, overlaps, parseTime } from '../../shared/slots.ts'
 import { ApiError, asObject, idParam, reqBool, reqInt } from '../validate.ts'
 import { withTransaction } from '../tx.ts'
 
@@ -206,80 +206,6 @@ export function scheduleRoutes(db: DatabaseSync): Router {
     const sessionId = idParam(req.params.id)
     sessionOr404(sessionId)
     res.json({ schedule: loadSchedule(db, sessionId, weekParam(req.query.week)) })
-  })
-
-  /**
-   * Set which classes attend. Every class runs the session's clock, so each
-   * takes its own column, and every attending class gets a placement in all
-   * PLAN_WEEKS weeks (blocks arrive from Generate or by hand). Classes
-   * already attending keep their column and any painted work; dropped ones
-   * lose all their placements.
-   */
-  router.put('/sessions/:id/classes', (req, res) => {
-    const sessionId = idParam(req.params.id)
-    const session = sessionOr404(sessionId)
-
-    const obj = asObject(req.body)
-    if (!Array.isArray(obj.classIds)) throw new ApiError(400, 'classIds must be an array')
-    const wanted = obj.classIds.map((id) => reqInt(id, 'classIds', 1, MAX_ID))
-    const names = new Map(
-      (db.prepare('SELECT id, name FROM groups').all() as { id: number; name: string }[]).map(
-        (c) => [c.id, c.name],
-      ),
-    )
-    for (const id of wanted) {
-      if (!names.has(id)) throw new ApiError(400, `class #${id} no longer exists`)
-    }
-    if (session.endMin - session.startMin < SLOT_MINUTES) {
-      throw new ApiError(400, 'the session window has no time in it')
-    }
-
-    withTransaction(db, () => {
-      const existing = db
-        .prepare('SELECT DISTINCT class_id, column_index FROM placements WHERE session_id = ?')
-        .all(sessionId) as { class_id: number; column_index: number }[]
-      const keep = new Set(wanted)
-      for (const row of existing) {
-        if (!keep.has(row.class_id)) {
-          db.prepare('DELETE FROM placements WHERE session_id = ? AND class_id = ?').run(
-            sessionId,
-            row.class_id,
-          )
-        }
-      }
-      const columnOf = new Map(existing.filter((r) => keep.has(r.class_id)).map((r) => [r.class_id, r.column_index]))
-      const usedColumns = new Set(columnOf.values())
-      const insert = db.prepare(
-        'INSERT INTO placements (session_id, class_id, column_index, week, start_min, end_min) VALUES (?, ?, ?, ?, ?, ?)',
-      )
-      const haveWeeks = new Map<number, Set<number>>()
-      for (const p of db
-        .prepare('SELECT class_id, week FROM placements WHERE session_id = ?')
-        .all(sessionId) as { class_id: number; week: number }[]) {
-        haveWeeks.set(p.class_id, (haveWeeks.get(p.class_id) ?? new Set()).add(p.week))
-      }
-
-      let nextColumn = 0
-      const takeColumn = () => {
-        while (usedColumns.has(nextColumn)) nextColumn++
-        usedColumns.add(nextColumn)
-        return nextColumn
-      }
-      for (const classId of wanted) {
-        const column = columnOf.get(classId) ?? takeColumn()
-        const have = haveWeeks.get(classId) ?? new Set<number>()
-        for (let week = 1; week <= PLAN_WEEKS; week++) {
-          if (!have.has(week)) {
-            insert.run(sessionId, classId, column, week, session.startMin, session.endMin)
-          }
-        }
-      }
-
-      const columnCount = wanted.length === 0 ? 0 : Math.max(...[...usedColumns]) + 1
-      db.prepare('UPDATE sessions SET column_count = ? WHERE id = ?').run(columnCount, sessionId)
-    })
-
-    res.json({ schedule: loadSchedule(db, sessionId, 1) })
   })
 
   /**

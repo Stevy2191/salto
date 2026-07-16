@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import request from 'supertest'
 import type { Express } from 'express'
-import { appWithAdmin } from './helpers.ts'
+import { appWithAdmin, createClass, findSlot } from './helpers.ts'
 
 let app: Express
 let cookie: string
@@ -26,22 +26,14 @@ beforeEach(async () => {
   vaultId = (await post('/api/events', { name: 'Vault' })).event.id
   beamId = (await post('/api/events', { name: 'Beam' })).event.id
   coachId = (await post('/api/coaches', { name: 'Dana Marsh' })).coach.id
-  lv1 = (await post('/api/classes', { name: 'LV 1' })).class.id
-  lv2 = (await post('/api/classes', { name: 'LV 2' })).class.id
-  sessionId = (
-    await post('/api/sessions', {
-      name: 'Monday',
-      date: '2026-03-02',
-      startTime: '16:00',
-      endTime: '20:00',
-    })
-  ).session.id
-  // Two lanes to place into.
-  await request(app)
-    .put(`/api/sessions/${sessionId}/columns`)
-    .set('Cookie', cookie)
-    .send({ columnCount: 2 })
-    .expect(200)
+  // Two classes on the same Monday 16:00 slot with a wide 4-hour period, so
+  // the derived session spans 16:00–20:00 with a lane each — the grid the
+  // block/placement tests exercise. (The grid PUT still accepts arbitrary
+  // placements within that window; reconciliation only seeds the lanes.)
+  const schedule = { daysOfWeek: [1], startTime: '16:00', periodMinutes: 240 }
+  lv1 = await createClass(app, cookie, { name: 'LV 1', ...schedule })
+  lv2 = await createClass(app, cookie, { name: 'LV 2', ...schedule })
+  sessionId = (await findSlot(app, cookie, 1, '16:00'))!.id
 })
 
 const save = (placements: unknown[]) =>
@@ -195,24 +187,30 @@ describe('event blocks', () => {
   })
 })
 
-describe('columns', () => {
-  it('adds empty lanes to place into', async () => {
-    const res = await request(app)
-      .put(`/api/sessions/${sessionId}/columns`)
-      .set('Cookie', cookie)
-      .send({ columnCount: 5 })
-      .expect(200)
-    expect(res.body.session.columnCount).toBe(5)
-  })
-
-  it('refuses to remove a column that still holds a class', async () => {
-    await save([placement({ columnIndex: 1 })]).expect(200)
-    const res = await request(app)
-      .put(`/api/sessions/${sessionId}/columns`)
-      .set('Cookie', cookie)
-      .send({ columnCount: 1 })
-      .expect(400)
-    expect(res.body.error).toMatch(/still holds classes/)
+describe('derived lanes', () => {
+  it('seeds a lane per class in the slot, spanning its period, in all weeks', async () => {
+    // Reconciliation, not a gather step, put both classes in the slot.
+    const session = (await request(app).get(`/api/sessions/${sessionId}`).set('Cookie', cookie)).body
+      .session
+    expect(session.columnCount).toBe(2)
+    for (let week = 1; week <= 4; week++) {
+      const { schedule } = (
+        await request(app)
+          .get(`/api/sessions/${sessionId}/schedule?week=${week}`)
+          .set('Cookie', cookie)
+      ).body
+      expect(
+        schedule.placements
+          .map((p: { classId: number; columnIndex: number }) => [p.classId, p.columnIndex])
+          .sort(),
+      ).toEqual([
+        [lv1, 0],
+        [lv2, 1],
+      ])
+      for (const p of schedule.placements) {
+        expect(p).toMatchObject({ startMin: T('16:00'), endMin: T('20:00') })
+      }
+    }
   })
 })
 
@@ -223,84 +221,5 @@ describe('schedule auth and 404s', () => {
 
   it('404s on a missing session', async () => {
     await request(app).get('/api/sessions/9999/schedule').set('Cookie', cookie).expect(404)
-  })
-})
-
-describe('gathering a session\'s classes', () => {
-  const gather = (classIds: number[]) =>
-    request(app).put(`/api/sessions/${sessionId}/classes`).set('Cookie', cookie).send({ classIds })
-
-  it('gives each class its own lane on the full session clock', async () => {
-    // All classes run the same clock in a 4-week plan, so each takes a column
-    // of its own spanning the whole session window.
-    const res = await gather([lv1, lv2]).expect(200)
-    expect(res.body.schedule.placements).toMatchObject([
-      { classId: lv1, columnIndex: 0, startMin: T('16:00'), endMin: T('20:00') },
-      { classId: lv2, columnIndex: 1, startMin: T('16:00'), endMin: T('20:00') },
-    ])
-    const session = (await request(app).get(`/api/sessions/${sessionId}`).set('Cookie', cookie)).body
-      .session
-    expect(session.columnCount).toBe(2)
-  })
-
-  it('places every attending class in all four weeks', async () => {
-    await gather([lv1, lv2]).expect(200)
-    for (let week = 1; week <= 4; week++) {
-      const { schedule } = (
-        await request(app)
-          .get(`/api/sessions/${sessionId}/schedule?week=${week}`)
-          .set('Cookie', cookie)
-      ).body
-      expect(schedule.placements.map((p: { classId: number }) => p.classId).sort()).toEqual(
-        [lv1, lv2].sort(),
-      )
-    }
-  })
-
-  it('uses the session window for every gathered class', async () => {
-    const res = await gather([lv1]).expect(200)
-    expect(res.body.schedule.placements[0]).toMatchObject({
-      startMin: T('16:00'),
-      endMin: T('20:00'),
-    })
-  })
-
-  it('keeps the window and painted work of a class already gathered', async () => {
-    await gather([lv1]).expect(200)
-    const placement = (await load()).placements[0]
-    // Hand-edit it: a tighter window with a block painted in.
-    await save([
-      {
-        classId: lv1,
-        columnIndex: placement.columnIndex,
-        startMin: T('17:00'),
-        endMin: T('18:00'),
-        blocks: [{ eventId: vaultId, coachId: null, startMin: T('17:00'), endMin: T('17:30') }],
-      },
-    ]).expect(200)
-
-    // Re-gathering with another class must not undo that.
-    await gather([lv1, lv2]).expect(200)
-    const after = (await load()).placements.find((p: { classId: number }) => p.classId === lv1)
-    expect(after).toMatchObject({ startMin: T('17:00'), endMin: T('18:00') })
-    expect(after.blocks).toHaveLength(1)
-  })
-
-  it('drops classes no longer attending, with their blocks', async () => {
-    await gather([lv1, lv2]).expect(200)
-    expect((await load()).placements).toHaveLength(2)
-    await gather([lv2]).expect(200)
-    const after = await load()
-    expect(after.placements).toHaveLength(1)
-    expect(after.placements[0].classId).toBe(lv2)
-  })
-
-  it('rejects an unknown class and 404s on a missing session', async () => {
-    await gather([9999]).expect(400)
-    await request(app)
-      .put('/api/sessions/9999/classes')
-      .set('Cookie', cookie)
-      .send({ classIds: [] })
-      .expect(404)
   })
 })
