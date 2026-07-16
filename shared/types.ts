@@ -9,15 +9,13 @@ export interface GymEvent {
   id: number
   name: string
   /**
-   * How long a class spends here per visit, in minutes — a facility-wide
-   * property of the station, not per class. A multiple of SLOT_MINUTES.
-   */
-  duration: number
-  /**
    * The collision rule. Exclusive (false, the default) means only one class
    * may be on this event at a time — the constraint the planner solves.
    * Shared (true) events hold any number at once: stretch, conditioning,
    * open floor.
+   *
+   * An event has no duration of its own — how long is spent there is a
+   * property of the class-event pairing, set per class in `eligibleEvents`.
    */
   shared: boolean
   active: boolean
@@ -59,6 +57,17 @@ export interface RequiredEvent {
 }
 
 /**
+ * One event a class is eligible for, with the minutes this class spends there
+ * per visit. Duration lives here — on the class-event pairing — not on the
+ * event: two classes can use the same apparatus for different lengths.
+ */
+export interface EligibleEvent {
+  eventId: number
+  /** Minutes this class spends at this event per visit; multiple of SLOT_MINUTES. */
+  minutes: number
+}
+
+/**
  * A facility offering that groups classes: "Preschool", "Rec Gym", "Team".
  * Its default times are the clock its classes run on unless a class says
  * otherwise, so a whole program can be staggered against another.
@@ -91,10 +100,12 @@ export interface GymClass {
    */
   startTime: string | null
   /**
-   * The subset of facility events this class may use. Each week the planner
-   * draws from this list — the class does not visit all of them per period.
+   * The events this class may use, each with **how long this class spends
+   * there per visit** — the only source of truth for that duration. Each week
+   * the planner draws from this list; the class does not visit all of them per
+   * period.
    */
-  eligibleEventIds: number[]
+  eligibleEvents: EligibleEvent[]
   /** Total period length in minutes, a multiple of SLOT_MINUTES. */
   periodMinutes: number
   /** Optional fixed opening block (a warm-up, usually a shared event). */

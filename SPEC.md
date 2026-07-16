@@ -38,9 +38,11 @@ No parent/athlete-facing features in v1. Single admin login per instance
 The facility enters **every** event used anywhere in the building, once.
 Fully user-defined — the examples are illustrative, never a fixed list.
 - `name` (e.g., PS Vault, Uneven Bars, Beam, Floor, Tumble Trak, Stretch)
-- `duration` — **how long a class spends there per visit**, set when the
-  event is created (PS Vault = 10 min). This is per event, facility-wide,
-  not per class: the event's rotation length is a property of the station.
+- **No duration.** An event is just its name plus its shared/exclusive tag and
+  color — how long is spent there is **not** a property of the station. That
+  duration belongs to the *class-event pairing* and is set per class on the
+  Classes page (see Class → `eligibleEvents`); two classes can use the same
+  apparatus for different lengths.
 - `shared` — **the collision rule.** Events default to **exclusive**: only
   one class may be on an exclusive event at any given moment. A **shared**
   event (tag it) may hold any number of classes at once — for warm-up
@@ -84,9 +86,13 @@ slot is derived from the classes that meet in it.
   is `startTime … startTime + periodMinutes`.
 - `level` / priority — higher-priority classes get first pick when conflicts
   arise (e.g., optionals over recreational)
-- `eligibleEvents` — **the subset of facility events this class may use.**
-  A class does *not* visit all of them in one period; it draws from this
-  list. (LWM: PS Bars, PS Vault, Tumble Trak, PS Floor, Rec Beams.)
+- `eligibleEvents` — **the events this class may use, each with the minutes
+  this class spends there.** A class does *not* visit all of them in one
+  period; it draws from this list. Every entry is `{ event, minutes }`, and
+  those minutes are the **only** source of truth for how long the class spends
+  at that event — the same apparatus can be 15 min for one class and 10 for
+  another. (LWM: PS Bars 10, PS Vault 10, Tumble Trak 15, PS Floor 10,
+  Rec Beams 10.)
 - `warmupEvent` / `warmupMinutes` — an optional fixed **opening** block: a
   stretch that leads every period, a length set per class. Usually a shared
   event.
@@ -95,8 +101,9 @@ slot is derived from the classes that meet in it.
 
 **The number of events per period is derived, not entered.** Period length
 minus the warm-up and cool-down blocks leaves the *middle time*; how many
-eligible events fit is that middle time divided by the events' own durations
-(each event carries its duration). A 45-min period with a 5-min warm-up and
+eligible events fit is that middle time divided by their **per-class**
+durations (each `eligibleEvents` entry carries its own minutes). A 45-min
+period with a 5-min warm-up and
 5-min cool-down leaves 35 min; four 10-min eligible events do not all fit, so
 the class draws three of them that week. While editing, the form shows the
 middle time and how many events it holds, so a class that cannot fit is

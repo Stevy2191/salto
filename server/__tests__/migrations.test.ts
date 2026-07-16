@@ -390,4 +390,38 @@ describe('migration runner', () => {
     ).toEqual([1, 3])
     expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
   })
+
+  it('per-class-event-duration moves event durations into each class, then drops the column', () => {
+    const db = new DatabaseSync(':memory:')
+    db.exec('PRAGMA foreign_keys = ON')
+    // Just before duration became a class-event property.
+    runMigrations(db, 10)
+    db.prepare("INSERT INTO programs (name) VALUES ('Rec')").run()
+    db.prepare(
+      "INSERT INTO events (name, duration_minutes, shared, capacity, color) VALUES ('Vault', 10, 0, 1, '#4E79A7'), ('Trak', 15, 0, 1, '#59A14F')",
+    ).run()
+    // A class eligible for both, stored the old way as an array of ids.
+    db.prepare(
+      "INSERT INTO groups (name, program_id, eligible_events, period_minutes) VALUES ('LWM', 1, '[1,2]', 60)",
+    ).run()
+
+    runMigrations(db)
+
+    // Eligibility now carries per-class minutes seeded from the event durations.
+    const eligible = JSON.parse(
+      (db.prepare('SELECT eligible_events AS e FROM groups WHERE id = 1').get() as { e: string }).e,
+    )
+    expect(eligible).toEqual([
+      { eventId: 1, minutes: 10 },
+      { eventId: 2, minutes: 15 },
+    ])
+
+    // The event-level duration is gone.
+    const cols = (
+      db.prepare("SELECT name FROM pragma_table_info('events')").all() as { name: string }[]
+    ).map((c) => c.name)
+    expect(cols).not.toContain('duration_minutes')
+    expect(cols).toContain('shared')
+    expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+  })
 })

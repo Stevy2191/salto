@@ -522,6 +522,36 @@ CREATE TABLE programs (
       db.exec('ALTER TABLE sessions DROP COLUMN date')
     },
   },
+  {
+    name: 'per-class-event-duration',
+    up: (db) => {
+      // Duration is a property of the class-event pairing, not the event. Move
+      // each class's eligible-event durations from the event's default into
+      // explicit per-class minutes, then drop the event-level duration.
+      const durationOf = new Map(
+        (db.prepare('SELECT id, duration_minutes AS d FROM events').all() as {
+          id: number
+          d: number
+        }[]).map((e) => [e.id, e.d]),
+      )
+      const classRows = db.prepare('SELECT id, eligible_events FROM groups').all() as {
+        id: number
+        eligible_events: string
+      }[]
+      const setClass = db.prepare('UPDATE groups SET eligible_events = ? WHERE id = ?')
+      for (const row of classRows) {
+        // Old shape: an array of event ids. New shape: {eventId, minutes}, the
+        // minutes seeded from the event's former duration (default 10).
+        const ids = JSON.parse(row.eligible_events) as number[]
+        const eligible = ids.map((eventId) => ({
+          eventId,
+          minutes: durationOf.get(eventId) ?? 10,
+        }))
+        setClass.run(JSON.stringify(eligible), row.id)
+      }
+      db.exec('ALTER TABLE events DROP COLUMN duration_minutes')
+    },
+  },
 ]
 
 export function runMigrations(db: DatabaseSync, upTo: number = MIGRATIONS.length): void {
