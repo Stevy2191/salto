@@ -312,17 +312,17 @@ export function SchedulePage() {
     }
   }
 
-  // Provisional bridge to the single-week solver: capacity mirrors the
-  // shared flag, and a class's structure is warm-up → eligible events →
-  // cool-down, each at its facility duration. The 4-week plan generator
-  // (which picks a per-week subset for coverage) supersedes this.
+  // Provisional bridge to the single-week solver (used by Repair): capacity
+  // mirrors the shared flag, and a class's structure is warm-up → eligible
+  // events → cool-down, each at its per-class duration. The 4-week plan
+  // generator (which picks a per-week subset for coverage) supersedes this.
   const requiredEventsOf = (cls: (typeof classes)[number]) => {
     const list: { eventId: number; duration: number; position: 'FIRST' | 'ANY' | 'LAST' }[] = []
     if (cls.warmupEventId !== null) {
       list.push({ eventId: cls.warmupEventId, duration: cls.warmupMinutes, position: 'FIRST' })
     }
-    for (const id of cls.eligibleEventIds) {
-      list.push({ eventId: id, duration: eventById.get(id)?.duration ?? SLOT_MINUTES, position: 'ANY' })
+    for (const e of cls.eligibleEvents) {
+      list.push({ eventId: e.eventId, duration: e.minutes, position: 'ANY' })
     }
     if (cls.cooldownEventId !== null) {
       list.push({ eventId: cls.cooldownEventId, duration: cls.cooldownMinutes, position: 'LAST' })
@@ -393,18 +393,12 @@ export function SchedulePage() {
       )
 
       const result = generatePlan({
-        events: events.map(({ id, name, duration, shared, active }) => ({
-          id,
-          name,
-          duration,
-          shared,
-          active,
-        })),
+        events: events.map(({ id, name, shared, active }) => ({ id, name, shared, active })),
         classes: classes.map((cls) => ({
           id: cls.id,
           name: cls.name,
           priority: cls.priority,
-          eligibleEventIds: cls.eligibleEventIds,
+          eligibleEvents: cls.eligibleEvents,
           periodMinutes: cls.periodMinutes,
           warmupEventId: cls.warmupEventId,
           warmupMinutes: cls.warmupMinutes,

@@ -9,8 +9,6 @@ import { SetupProgress } from '../components/SetupProgress.tsx'
 
 export interface EventFormValues {
   name: string
-  /** How long a class spends here per visit, in minutes (multiple of 5). */
-  duration: number
   /** Shared events hold any number of classes at once; exclusive ones, one. */
   shared: boolean
   active: boolean
@@ -81,7 +79,6 @@ export function EventForm({
   onCancel?: () => void
 }) {
   const [name, setName] = useState(initial.name)
-  const [duration, setDuration] = useState(String(initial.duration))
   const [shared, setShared] = useState(initial.shared)
   const [active, setActive] = useState(initial.active)
   const [color, setColor] = useState(initial.color)
@@ -93,13 +90,11 @@ export function EventForm({
       // Omit color entirely when unset so the server auto-assigns one.
       await onSave({
         name,
-        duration: Number(duration),
         shared,
         active,
         color,
       })
       setName(initial.name)
-      setDuration(String(initial.duration))
       setShared(initial.shared)
       setActive(initial.active)
       setColor(initial.color)
@@ -112,24 +107,12 @@ export function EventForm({
   return (
     <form onSubmit={submit} className="space-y-3">
       <ErrorNote message={error} />
-      <div className="grid gap-3 sm:grid-cols-[1fr_9rem_auto_auto_auto] sm:items-end">
+      <div className="grid gap-3 sm:grid-cols-[1fr_auto_auto_auto] sm:items-end">
         <Field label="Event name">
           <TextInput
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Beam, Tumble Track"
-            required
-          />
-        </Field>
-        <Field label="Minutes per visit">
-          <TextInput
-            type="number"
-            min={5}
-            max={480}
-            step={5}
-            value={duration}
-            onChange={(e) => setDuration(e.target.value)}
-            placeholder="e.g. 10"
             required
           />
         </Field>
@@ -197,7 +180,7 @@ export function EventsPage() {
           Add event
         </h2>
         <EventForm
-          initial={{ name: '', duration: 10, shared: false, active: true, color: null }}
+          initial={{ name: '', shared: false, active: true, color: null }}
           onSave={async ({ color, ...rest }) => {
             await apiPost('/api/events', color === null ? rest : { ...rest, color })
             await reload()
@@ -238,7 +221,7 @@ export function EventsPage() {
                     </span>
                   )}
                   <p className="text-sm text-slate-500 dark:text-slate-400">
-                    {event.duration} min · {event.shared ? 'shared' : 'exclusive'}
+                    {event.shared ? 'shared' : 'exclusive'}
                     {!event.active && ' · inactive'}
                   </p>
                 </div>

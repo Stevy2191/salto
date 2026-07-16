@@ -26,8 +26,8 @@ export interface ClassFormValues {
   daysOfWeek: number[]
   /** "HH:MM" 24h start time, or "" when not scheduled yet. */
   startTime: string
-  /** The subset of events this class may be scheduled onto. */
-  eligibleEventIds: number[]
+  /** The events this class may use, each with its per-class minutes. */
+  eligibleEvents: GymClass['eligibleEvents']
   /** Whole period length in minutes; a multiple of SLOT_MINUTES. */
   periodMinutes: number
   /** Optional fixed opening block. Null event id means no warm-up. */
@@ -124,23 +124,19 @@ function AnchorEditor({
  * total the whole list has to fit inside.
  */
 function FitSummary({
-  events,
-  eligibleEventIds,
+  eligibleMinutes,
   periodMinutes,
   warmupMinutes,
   cooldownMinutes,
 }: {
-  events: GymEvent[]
-  eligibleEventIds: number[]
+  /** Each eligible event's per-class minutes. */
+  eligibleMinutes: number[]
   periodMinutes: number
   warmupMinutes: number
   cooldownMinutes: number
 }) {
   const middle = periodMinutes - warmupMinutes - cooldownMinutes
-  const durations = eligibleEventIds
-    .map((id) => events.find((e) => e.id === id)?.duration ?? 0)
-    .filter((d) => d > 0)
-    .sort((a, b) => a - b)
+  const durations = eligibleMinutes.filter((d) => d > 0).sort((a, b) => a - b)
 
   // How many of the eligible events fit the middle time, shortest first — the
   // most a period could hold.
@@ -163,9 +159,9 @@ function FitSummary({
         <p className="font-medium text-red-600 dark:text-red-400">
           ⚠ The warm-up and cool-down leave no time for events.
         </p>
-      ) : eligibleEventIds.length === 0 ? (
+      ) : durations.length === 0 ? (
         <p className="text-slate-500 dark:text-slate-400">
-          Choose the events this class may rotate through.
+          Add the events this class may rotate through, each with its minutes.
         </p>
       ) : overflows ? (
         <p className="font-medium text-red-600 dark:text-red-400">
@@ -173,9 +169,86 @@ function FitSummary({
         </p>
       ) : (
         <p className="text-emerald-700 dark:text-emerald-300">
-          Up to {fit} of {eligibleEventIds.length} eligible event{eligibleEventIds.length === 1 ? '' : 's'}{' '}
-          fit each period.
+          Up to {fit} of {durations.length} eligible event{durations.length === 1 ? '' : 's'} fit each
+          period.
         </p>
+      )}
+    </div>
+  )
+}
+
+/** Draft of one eligible event while editing; minutes stays a string. */
+interface EligibleDraft {
+  eventId: number
+  minutes: string
+}
+
+/**
+ * The class's eligible events, each with the minutes this class spends there.
+ * Duration lives here — on the class-event pairing — so the same apparatus can
+ * be a different length for another class.
+ */
+function EligibleEventsEditor({
+  events,
+  value,
+  onChange,
+}: {
+  events: GymEvent[]
+  value: EligibleDraft[]
+  onChange: (next: EligibleDraft[]) => void
+}) {
+  const chosen = new Set(value.map((v) => v.eventId))
+  const available = events.filter((e) => !chosen.has(e.id))
+  const nameOf = (id: number) => events.find((e) => e.id === id)?.name ?? `#${id}`
+
+  return (
+    <div className="space-y-2">
+      {value.length === 0 && (
+        <p className="text-sm text-slate-400 dark:text-slate-500">
+          {events.length === 0
+            ? 'Create events first, then add the ones this class rotates through.'
+            : 'No eligible events yet — add one below with its minutes.'}
+        </p>
+      )}
+      {value.map((entry, i) => (
+        <div key={entry.eventId} className="flex flex-wrap items-center gap-2">
+          <span className="min-w-32 text-sm font-medium text-slate-700 dark:text-slate-200">
+            {nameOf(entry.eventId)}
+          </span>
+          <TextInput
+            type="number"
+            min={SLOT_MINUTES}
+            step={SLOT_MINUTES}
+            className="max-w-24"
+            value={entry.minutes}
+            onChange={(e) =>
+              onChange(value.map((v, j) => (j === i ? { ...v, minutes: e.target.value } : v)))
+            }
+            aria-label={`${nameOf(entry.eventId)} minutes`}
+          />
+          <span className="text-sm text-slate-500 dark:text-slate-400">min</span>
+          <Button type="button" variant="danger" onClick={() => onChange(value.filter((_, j) => j !== i))}>
+            Remove
+          </Button>
+        </div>
+      ))}
+      {available.length > 0 && (
+        <Select
+          aria-label="add eligible event"
+          value=""
+          className="max-w-56"
+          onChange={(e) => {
+            const id = Number(e.target.value)
+            if (id) onChange([...value, { eventId: id, minutes: '10' }])
+          }}
+        >
+          <option value="">+ Add event…</option>
+          {available.map((e) => (
+            <option key={e.id} value={e.id}>
+              {e.name}
+            </option>
+          ))}
+        </Select>
       )}
     </div>
   )
@@ -206,7 +279,9 @@ export function ClassForm({
   const [priority, setPriority] = useState(String(initial.priority))
   const [daysOfWeek, setDaysOfWeek] = useState(initial.daysOfWeek)
   const [startTime, setStartTime] = useState(initial.startTime)
-  const [eligibleEventIds, setEligibleEventIds] = useState(initial.eligibleEventIds)
+  const toDrafts = (list: GymClass['eligibleEvents']): EligibleDraft[] =>
+    list.map((e) => ({ eventId: e.eventId, minutes: String(e.minutes) }))
+  const [eligible, setEligible] = useState<EligibleDraft[]>(toDrafts(initial.eligibleEvents))
   const [periodMinutes, setPeriodMinutes] = useState(String(initial.periodMinutes))
   const [warmupEventId, setWarmupEventId] = useState<number | ''>(initial.warmupEventId ?? '')
   const [warmupMinutes, setWarmupMinutes] = useState(String(initial.warmupMinutes))
@@ -223,7 +298,7 @@ export function ClassForm({
     setPriority(String(source.priority))
     setDaysOfWeek(source.daysOfWeek)
     setStartTime(source.startTime ?? '')
-    setEligibleEventIds(source.eligibleEventIds)
+    setEligible(toDrafts(source.eligibleEvents))
     setPeriodMinutes(String(source.periodMinutes))
     setWarmupEventId(source.warmupEventId ?? '')
     setWarmupMinutes(String(source.warmupMinutes))
@@ -245,6 +320,15 @@ export function ClassForm({
       setError("The warm-up and cool-down don't leave any time in the period.")
       return
     }
+    const eligibleEvents = []
+    for (const draft of eligible) {
+      const minutes = Number(draft.minutes)
+      if (!Number.isInteger(minutes) || minutes < SLOT_MINUTES || minutes % SLOT_MINUTES !== 0) {
+        setError(`Give each eligible event a duration in minutes (a multiple of ${SLOT_MINUTES}).`)
+        return
+      }
+      eligibleEvents.push({ eventId: draft.eventId, minutes })
+    }
     try {
       await onSave({
         name,
@@ -252,7 +336,7 @@ export function ClassForm({
         priority: Number(priority),
         daysOfWeek,
         startTime,
-        eligibleEventIds,
+        eligibleEvents,
         periodMinutes: period,
         warmupEventId: warmupEventId === '' ? null : warmupEventId,
         warmupMinutes: warm,
@@ -264,7 +348,7 @@ export function ClassForm({
       setPriority(String(initial.priority))
       setDaysOfWeek(initial.daysOfWeek)
       setStartTime(initial.startTime)
-      setEligibleEventIds(initial.eligibleEventIds)
+      setEligible(toDrafts(initial.eligibleEvents))
       setPeriodMinutes(String(initial.periodMinutes))
       setWarmupEventId(initial.warmupEventId ?? '')
       setWarmupMinutes(String(initial.warmupMinutes))
@@ -394,21 +478,10 @@ export function ClassForm({
           />
         </div>
       </FieldGroup>
-      <FieldGroup label="Eligible events">
-        {events.length === 0 ? (
-          <p className="text-sm text-slate-400 dark:text-slate-500">
-            Create events first, then choose which ones this class may rotate through.
-          </p>
-        ) : (
-          <ChipPicker
-            options={events.map((e) => ({ id: e.id, label: `${e.name} · ${e.duration}′` }))}
-            selected={eligibleEventIds}
-            onChange={setEligibleEventIds}
-          />
-        )}
+      <FieldGroup label="Eligible events (with minutes at each)">
+        <EligibleEventsEditor events={events} value={eligible} onChange={setEligible} />
         <FitSummary
-          events={events}
-          eligibleEventIds={eligibleEventIds}
+          eligibleMinutes={eligible.map((e) => Number(e.minutes) || 0)}
           periodMinutes={Number(periodMinutes) || 0}
           warmupMinutes={warmupEventId === '' ? 0 : Number(warmupMinutes) || 0}
           cooldownMinutes={cooldownEventId === '' ? 0 : Number(cooldownMinutes) || 0}
@@ -459,8 +532,11 @@ export function ClassesPage() {
 
   function describe(cls: GymClass): string {
     const nameOf = (id: number | null) => (id === null ? null : events.find((e) => e.id === id)?.name)
-    const eligible = cls.eligibleEventIds
-      .map((id) => events.find((e) => e.id === id)?.name)
+    const eligible = cls.eligibleEvents
+      .map((e) => {
+        const name = events.find((ev) => ev.id === e.eventId)?.name
+        return name ? `${name} ${e.minutes}′` : null
+      })
       .filter(Boolean)
     const warmup = nameOf(cls.warmupEventId)
     const cooldown = nameOf(cls.cooldownEventId)
@@ -489,7 +565,7 @@ export function ClassesPage() {
     priority: 0,
     daysOfWeek: [],
     startTime: '',
-    eligibleEventIds: [],
+    eligibleEvents: [],
     periodMinutes: 45,
     warmupEventId: null,
     warmupMinutes: 0,

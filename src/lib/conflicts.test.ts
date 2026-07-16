@@ -5,7 +5,6 @@ import { findConflicts } from './conflicts.ts'
 const event = (id: number, shared = false, active = true): GymEvent => ({
   id,
   name: `Event ${id}`,
-  duration: 10,
   shared,
   active,
   color: '#4E79A7',

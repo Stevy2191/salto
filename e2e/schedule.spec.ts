@@ -71,7 +71,8 @@ async function addClass(
     period: string
     warmup: string
     cooldown: string
-    eligible: string[]
+    /** [event name, minutes this class spends there]. */
+    eligible: [string, string][]
     copyFrom?: string
   },
 ) {
@@ -87,8 +88,10 @@ async function addClass(
     await form.getByLabel('Warm-up minutes').fill('10')
     await form.getByRole('combobox', { name: 'Cool-down event' }).selectOption({ label: opts.cooldown })
     await form.getByLabel('Cool-down minutes').fill('10')
-    for (const ev of opts.eligible) {
-      await form.getByRole('button', { name: new RegExp(ev) }).click()
+    // Each eligible event is added from the dropdown, then given its minutes.
+    for (const [ev, minutes] of opts.eligible) {
+      await form.getByRole('combobox', { name: 'add eligible event' }).selectOption({ label: ev })
+      await form.getByLabel(`${ev} minutes`).fill(minutes)
     }
   }
   await form.getByRole('button', { name: 'Save' }).click()
@@ -114,16 +117,16 @@ test('first run: enter the class-owned structure, sessions auto-group', async ({
   // The ordered-setup helper guides the build order but leaves the nav free.
   await expect(page.getByText('Getting set up')).toBeVisible()
 
-  const events: [string, string, boolean][] = [
-    ['Warm-up', '10', true],
-    ['Stretch', '10', true],
-    ['Tumble Trak', '15', false],
-    ['Vault', '10', false],
-    ['Beam', '10', false],
+  // Events carry no duration now — just a name and the shared/exclusive tag.
+  const events: [string, boolean][] = [
+    ['Warm-up', true],
+    ['Stretch', true],
+    ['Tumble Trak', false],
+    ['Vault', false],
+    ['Beam', false],
   ]
-  for (const [name, minutes, shared] of events) {
+  for (const [name, shared] of events) {
     await page.getByLabel('Event name').fill(name)
-    await page.getByLabel('Minutes per visit').fill(minutes)
     const sharedBox = page.getByRole('checkbox', { name: 'Shared' })
     if ((await sharedBox.isChecked()) !== shared) await sharedBox.click()
     await page.getByRole('button', { name: 'Save' }).first().click()
@@ -146,9 +149,21 @@ test('first run: enter the class-owned structure, sessions auto-group', async ({
     period: '60',
     warmup: 'Warm-up',
     cooldown: 'Stretch',
-    eligible: ['Tumble Trak', 'Vault'],
+    eligible: [
+      ['Tumble Trak', '15'],
+      ['Vault', '10'],
+    ],
   })
-  await addClass(page, { name: 'Tiny Tot 2', day: '', start: '', period: '', warmup: '', cooldown: '', eligible: [], copyFrom: 'Tiny Tot 1' })
+  await addClass(page, {
+    name: 'Tiny Tot 2',
+    day: '',
+    start: '',
+    period: '',
+    warmup: '',
+    cooldown: '',
+    eligible: [],
+    copyFrom: 'Tiny Tot 1',
+  })
 
   // A coach.
   await page.getByRole('link', { name: 'Coaches', exact: true }).click()
@@ -193,6 +208,39 @@ test('generate a slot plan: coverage met, exclusive event never doubled', async 
   await page.getByRole('button', { name: '2', exact: true }).click()
   await expect(page.getByText('Editing week 2')).toBeVisible()
   await expect(page.locator('[data-testid^="block-"]').first()).toBeVisible()
+})
+
+test('two classes share an event at different durations, and the plan honors each', async ({
+  page,
+}) => {
+  page.on('dialog', (d) => void d.accept())
+  await login(page)
+
+  // Give Tiny Tot 2 a longer Tumble Trak than Tiny Tot 1 — duration lives on
+  // the class-event pairing, so the same apparatus differs per class.
+  await page.goto('/classes')
+  const row = page.getByRole('listitem').filter({ hasText: 'Tiny Tot 2' })
+  await row.getByRole('button', { name: 'Edit' }).click()
+  const editForm = page
+    .getByRole('listitem')
+    .filter({ has: page.getByRole('button', { name: 'Cancel' }) })
+  await editForm.getByLabel('Tumble Trak minutes').fill('20')
+  await editForm.getByRole('button', { name: 'Save' }).click()
+  await expect(page.getByText(/Tumble Trak 20′/)).toBeVisible()
+
+  // Generate the slot and read back the two Trak blocks in week 1.
+  await page.goto('/sessions')
+  await page.getByRole('link', { name: 'Generate / view plan' }).first().click()
+  await page.getByRole('button', { name: 'Generate 4-week plan' }).click()
+  await expect(page.getByText('Coverage across the four weeks')).toBeVisible()
+
+  const traks = page.locator('[data-testid^="block-"]').filter({ hasText: 'Tumble Trak' })
+  await expect(traks).toHaveCount(2)
+  const heights = (
+    await Promise.all([0, 1].map(async (i) => Math.round((await traks.nth(i).boundingBox())!.height)))
+  ).sort((a, b) => a - b)
+  // 15 min → 3 rows, 20 min → 4 rows: each class's own duration is honored.
+  expect(heights).toEqual([3 * ROW_H, 4 * ROW_H])
 })
 
 test('locking a week keeps it through a re-randomize', async ({ page }) => {
