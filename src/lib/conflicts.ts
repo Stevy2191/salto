@@ -8,12 +8,12 @@
 import type { GymEvent, Placement, Schedule } from '../../shared/types.ts'
 import { SLOT_MINUTES, overlaps } from '../../shared/slots.ts'
 
-export type BlockConflict = 'coach-double-booked' | 'over-capacity' | 'event-inactive'
+export type BlockConflict = 'coach-double-booked' | 'event-double-booked' | 'event-inactive'
 export type PlacementConflict = 'column-overlap' | 'class-double-booked'
 
 export const BLOCK_CONFLICT_LABELS: Record<BlockConflict, string> = {
   'coach-double-booked': 'coach is in two places at once',
-  'over-capacity': 'too many classes on this event',
+  'event-double-booked': 'two classes on an exclusive event at once',
   'event-inactive': 'event is inactive',
 }
 
@@ -112,14 +112,15 @@ export function findConflicts(schedule: Schedule, events: GymEvent[]): Conflicts
       }
     }
 
-    // More simultaneous classes on an event than it fits.
+    // Two different classes on the same exclusive event at once. Shared
+    // events (stretch, conditioning) hold any number, so they never collide.
     const byEvent = new Map<number, Live[]>()
     for (const l of live) byEvent.set(l.eventId, [...(byEvent.get(l.eventId) ?? []), l])
     for (const [eventId, list] of byEvent) {
-      const capacity = eventById.get(eventId)?.capacity
-      if (capacity === null || capacity === undefined) continue // no limit
-      if (new Set(list.map((l) => l.classId)).size > capacity) {
-        for (const l of list) add(blockReasons, l.blockId, 'over-capacity')
+      const event = eventById.get(eventId)
+      if (!event || event.shared) continue // shared events have no limit
+      if (new Set(list.map((l) => l.classId)).size > 1) {
+        for (const l of list) add(blockReasons, l.blockId, 'event-double-booked')
       }
     }
   }

@@ -364,14 +364,37 @@ export function SchedulePage() {
     }
   }
 
+  // Provisional bridge to the single-week solver: capacity mirrors the
+  // shared flag, and a class's structure is warm-up → eligible events →
+  // cool-down, each at its facility duration. The 4-week plan generator
+  // (which picks a per-week subset for coverage) supersedes this.
+  const requiredEventsOf = (cls: (typeof classes)[number]) => {
+    const list: { eventId: number; duration: number; position: 'FIRST' | 'ANY' | 'LAST' }[] = []
+    if (cls.warmupEventId !== null) {
+      list.push({ eventId: cls.warmupEventId, duration: cls.warmupMinutes, position: 'FIRST' })
+    }
+    for (const id of cls.eligibleEventIds) {
+      list.push({ eventId: id, duration: eventById.get(id)?.duration ?? SLOT_MINUTES, position: 'ANY' })
+    }
+    if (cls.cooldownEventId !== null) {
+      list.push({ eventId: cls.cooldownEventId, duration: cls.cooldownMinutes, position: 'LAST' })
+    }
+    return list
+  }
+
   const solverBits = () => ({
-    events: events.map(({ id, name, capacity, active }) => ({ id, name, capacity, active })),
-    classes: classes.map(({ id, name, priority, requiredEvents, assignedCoaches }) => ({
+    events: events.map(({ id, name, shared, active }) => ({
       id,
       name,
-      priority,
-      requiredEvents,
-      assignedCoaches,
+      capacity: shared ? null : 1,
+      active,
+    })),
+    classes: classes.map((cls) => ({
+      id: cls.id,
+      name: cls.name,
+      priority: cls.priority,
+      requiredEvents: requiredEventsOf(cls),
+      assignedCoaches: cls.assignedCoaches,
     })),
     coaches: coaches.map(({ id, name, specialties }) => ({ id, name, specialties })),
     coachMode: settingsLoad.data!.settings.coachMode,

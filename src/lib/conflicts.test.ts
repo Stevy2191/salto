@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest'
 import type { EventBlock, GymEvent, Placement, Schedule } from '../../shared/types.ts'
 import { findConflicts } from './conflicts.ts'
 
-const event = (id: number, capacity: number | null = 1, active = true): GymEvent => ({
+const event = (id: number, shared = false, active = true): GymEvent => ({
   id,
   name: `Event ${id}`,
-  capacity,
+  duration: 10,
+  shared,
   active,
   color: '#4E79A7',
   isSample: false,
@@ -25,7 +26,7 @@ const placement = (
   startMin: number,
   endMin: number,
   blocks: EventBlock[] = [],
-): Placement => ({ id: nextId++, classId, columnIndex, startMin, endMin, blocks })
+): Placement => ({ id: nextId++, classId, columnIndex, week: 1, startMin, endMin, blocks })
 
 const schedule = (placements: Placement[]): Schedule => ({ placements })
 
@@ -86,9 +87,11 @@ describe('coaches', () => {
   it('allows one coach running two classes at the same event — one station', () => {
     const one = block(1, 960, 1020, 7)
     const two = block(1, 960, 1020, 7)
+    // A shared event, so the two classes on it don't trip the exclusive-event
+    // rule — this isolates the coach "one station" rule.
     const found = findConflicts(
       schedule([placement(1, 0, 960, 1080, [one]), placement(2, 1, 960, 1080, [two])]),
-      [event(1, 2)],
+      [event(1, true)],
     )
     expect(found.count).toBe(0)
   })
@@ -115,48 +118,37 @@ describe('coaches', () => {
   })
 })
 
-describe('event capacity', () => {
-  it('flags more simultaneous classes than the event fits', () => {
+describe('exclusive event collisions', () => {
+  it('flags two classes on an exclusive event at the same time', () => {
     const one = block(1, 960, 1020)
     const two = block(1, 1000, 1080)
     const found = findConflicts(
       schedule([placement(1, 0, 960, 1080, [one]), placement(2, 1, 960, 1080, [two])]),
-      [event(1, 1)],
+      [event(1)],
     )
-    expect(found.blocks.get(one.id)).toContain('over-capacity')
-    expect(found.blocks.get(two.id)).toContain('over-capacity')
+    expect(found.blocks.get(one.id)).toContain('event-double-booked')
+    expect(found.blocks.get(two.id)).toContain('event-double-booked')
   })
 
-  it('respects a capacity above one', () => {
-    const found = findConflicts(
-      schedule([
-        placement(1, 0, 960, 1080, [block(1, 960, 1020)]),
-        placement(2, 1, 960, 1080, [block(1, 960, 1020)]),
-      ]),
-      [event(1, 2)],
-    )
-    expect(found.count).toBe(0)
-  })
-
-  it('never flags an event with no limit', () => {
+  it('never flags a shared event, however many classes are on it', () => {
     const found = findConflicts(
       schedule([
         placement(1, 0, 960, 1080, [block(1, 960, 1020)]),
         placement(2, 1, 960, 1080, [block(1, 960, 1020)]),
         placement(3, 2, 960, 1080, [block(1, 960, 1020)]),
       ]),
-      [event(1, null)],
+      [event(1, true)],
     )
     expect(found.count).toBe(0)
   })
 
-  it('does not flag classes that merely share an event at different times', () => {
+  it('does not flag classes that merely share an exclusive event at different times', () => {
     const found = findConflicts(
       schedule([
         placement(1, 0, 960, 1080, [block(1, 960, 1020)]),
         placement(2, 1, 960, 1080, [block(1, 1020, 1080)]),
       ]),
-      [event(1, 1)],
+      [event(1)],
     )
     expect(found.count).toBe(0)
   })
@@ -165,7 +157,9 @@ describe('event capacity', () => {
 describe('inactive events', () => {
   it('flags a block on an inactive event', () => {
     const one = block(1, 960, 1020)
-    const found = findConflicts(schedule([placement(1, 0, 960, 1080, [one])]), [event(1, 1, false)])
+    const found = findConflicts(schedule([placement(1, 0, 960, 1080, [one])]), [
+      event(1, false, false),
+    ])
     expect(found.blocks.get(one.id)).toContain('event-inactive')
   })
 
@@ -187,11 +181,11 @@ describe('multiple reasons', () => {
         placement(2, 1, 960, 1080, [two]),
         placement(3, 2, 960, 1080, [three]),
       ]),
-      [event(1, 1, false), event(2)],
+      [event(1, false, false), event(2)],
     )
     const reasons = found.blocks.get(one.id)!
     expect(reasons).toContain('event-inactive')
-    expect(reasons).toContain('over-capacity')
+    expect(reasons).toContain('event-double-booked')
     expect(reasons).toContain('coach-double-booked')
   })
 })

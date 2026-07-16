@@ -93,7 +93,7 @@ describe('programs CRUD', () => {
 })
 
 describe('classes belong to a program and carry structure', () => {
-  it('stores the program, per-event durations, positions, and its own window', async () => {
+  it('stores the program, eligibility, period, and anchors', async () => {
     const program = (
       await post('/api/programs', {
         name: 'Preschool',
@@ -101,58 +101,62 @@ describe('classes belong to a program and carry structure', () => {
         defaultEndTime: '17:00',
       })
     ).body.program
+    // Warm-up/cool-down anchors are foreign keys, so seed events first.
+    const ev = async (name: string) => (await post('/api/events', { name })).body.event.id
+    const [e1, e2, e3, warm, cool] = [
+      await ev('A'),
+      await ev('B'),
+      await ev('C'),
+      await ev('Warm-up'),
+      await ev('Stretch'),
+    ]
     const created = await post('/api/classes', {
       name: 'Tiny Tot 1',
       programId: program.id,
-      defaultStartTime: '16:15',
-      defaultEndTime: '17:15',
-      requiredEvents: [
-        { eventId: 1, duration: 15, position: 'FIRST' },
-        { eventId: 2, duration: 15 },
-        { eventId: 3, duration: 15, position: 'LAST' },
-      ],
+      eligibleEventIds: [e1, e2, e3],
+      periodMinutes: 60,
+      warmupEventId: warm,
+      warmupMinutes: 10,
+      cooldownEventId: cool,
+      cooldownMinutes: 10,
     }).expect(201)
 
     expect(created.body.class).toMatchObject({
       programId: program.id,
-      // A class's own clock overrides its program's.
-      defaultStartTime: '16:15',
-      defaultEndTime: '17:15',
+      eligibleEventIds: [e1, e2, e3],
+      periodMinutes: 60,
+      warmupEventId: warm,
+      warmupMinutes: 10,
+      cooldownEventId: cool,
+      cooldownMinutes: 10,
     })
-    expect(created.body.class.requiredEvents).toEqual([
-      { eventId: 1, duration: 15, position: 'FIRST' },
-      // An unstated position means "anywhere".
-      { eventId: 2, duration: 15, position: 'ANY' },
-      { eventId: 3, duration: 15, position: 'LAST' },
-    ])
   })
 
-  it('rejects an unknown position or program', async () => {
-    await post('/api/classes', {
-      name: 'X',
-      requiredEvents: [{ eventId: 1, duration: 15, position: 'SECOND' }],
-    }).expect(400)
+  it('rejects an unknown program', async () => {
     await post('/api/classes', { name: 'X', programId: 999 }).expect(404)
   })
 
-  it('lets two classes in different programs want the same shared event', async () => {
+  it('lets two classes in different programs be eligible for the same event', async () => {
     const a = (await post('/api/programs', { name: 'Preschool' })).body.program
     const b = (await post('/api/programs', { name: 'Rec Gym' })).body.program
     const trak = (await post('/api/events', { name: 'Tumble Trak' })).body.event
     await post('/api/classes', {
       name: 'Tiny Tot 1',
       programId: a.id,
-      requiredEvents: [{ eventId: trak.id, duration: 15 }],
+      eligibleEventIds: [trak.id],
     }).expect(201)
     await post('/api/classes', {
       name: 'Rec Gym 1',
       programId: b.id,
-      requiredEvents: [{ eventId: trak.id, duration: 10 }],
+      eligibleEventIds: [trak.id],
     }).expect(201)
 
-    // Events are facility-wide: the contention is the generator's problem,
-    // not something the model forbids.
+    // Events are facility-wide: the contention over an exclusive event is the
+    // generator's problem, not something the model forbids.
     const classes = (await request(app).get('/api/classes').set('Cookie', cookie)).body.classes
-    expect(classes.map((c: { requiredEvents: { duration: number }[] }) => c.requiredEvents[0].duration)).toEqual([15, 10])
+    expect(classes.map((c: { eligibleEventIds: number[] }) => c.eligibleEventIds)).toEqual([
+      [trak.id],
+      [trak.id],
+    ])
   })
 })

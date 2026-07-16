@@ -8,8 +8,10 @@ import { Button, Card, EmptyNote, ErrorNote, Field, FieldGroup, PageHeader, Text
 
 export interface EventFormValues {
   name: string
-  /** null = no limit on simultaneous classes. */
-  capacity: number | null
+  /** How long a class spends here per visit, in minutes (multiple of 5). */
+  duration: number
+  /** Shared events hold any number of classes at once; exclusive ones, one. */
+  shared: boolean
   active: boolean
   /** null = let the server auto-assign the next unused palette color. */
   color: string | null
@@ -78,7 +80,8 @@ export function EventForm({
   onCancel?: () => void
 }) {
   const [name, setName] = useState(initial.name)
-  const [capacity, setCapacity] = useState(initial.capacity === null ? '' : String(initial.capacity))
+  const [duration, setDuration] = useState(String(initial.duration))
+  const [shared, setShared] = useState(initial.shared)
   const [active, setActive] = useState(initial.active)
   const [color, setColor] = useState(initial.color)
   const [error, setError] = useState<string | null>(null)
@@ -87,15 +90,16 @@ export function EventForm({
     e.preventDefault()
     try {
       // Omit color entirely when unset so the server auto-assigns one.
-      // A blank capacity means "no limit".
       await onSave({
         name,
-        capacity: capacity.trim() === '' ? null : Number(capacity),
+        duration: Number(duration),
+        shared,
         active,
         color,
       })
       setName(initial.name)
-      setCapacity(initial.capacity === null ? '' : String(initial.capacity))
+      setDuration(String(initial.duration))
+      setShared(initial.shared)
       setActive(initial.active)
       setColor(initial.color)
       setError(null)
@@ -107,7 +111,7 @@ export function EventForm({
   return (
     <form onSubmit={submit} className="space-y-3">
       <ErrorNote message={error} />
-      <div className="grid gap-3 sm:grid-cols-[1fr_8rem_auto_auto] sm:items-end">
+      <div className="grid gap-3 sm:grid-cols-[1fr_9rem_auto_auto_auto] sm:items-end">
         <Field label="Event name">
           <TextInput
             value={name}
@@ -116,16 +120,30 @@ export function EventForm({
             required
           />
         </Field>
-        <Field label="Class limit (blank = no limit)">
+        <Field label="Minutes per visit">
           <TextInput
             type="number"
-            min={1}
-            max={20}
-            value={capacity}
-            onChange={(e) => setCapacity(e.target.value)}
-            placeholder="no limit"
+            min={5}
+            max={480}
+            step={5}
+            value={duration}
+            onChange={(e) => setDuration(e.target.value)}
+            placeholder="e.g. 10"
+            required
           />
         </Field>
+        <label
+          className="flex min-h-11 items-center gap-2 py-2 text-sm font-medium text-slate-700 dark:text-slate-200"
+          title="Shared events (stretch, conditioning) hold many classes at once. Exclusive ones allow only one class at a time."
+        >
+          <input
+            type="checkbox"
+            checked={shared}
+            onChange={(e) => setShared(e.target.checked)}
+            className="size-5 accent-indigo-600"
+          />
+          Shared
+        </label>
         <label className="flex min-h-11 items-center gap-2 py-2 text-sm font-medium text-slate-700 dark:text-slate-200">
           <input
             type="checkbox"
@@ -177,7 +195,7 @@ export function EventsPage() {
           Add event
         </h2>
         <EventForm
-          initial={{ name: '', capacity: 1, active: true, color: null }}
+          initial={{ name: '', duration: 10, shared: false, active: true, color: null }}
           onSave={async ({ color, ...rest }) => {
             await apiPost('/api/events', color === null ? rest : { ...rest, color })
             await reload()
@@ -218,11 +236,7 @@ export function EventsPage() {
                     </span>
                   )}
                   <p className="text-sm text-slate-500 dark:text-slate-400">
-                    {event.capacity === null
-                      ? 'no class limit'
-                      : event.capacity === 1
-                        ? '1 class at a time'
-                        : `${event.capacity} classes at a time`}
+                    {event.duration} min · {event.shared ? 'shared' : 'exclusive'}
                     {!event.active && ' · inactive'}
                   </p>
                 </div>

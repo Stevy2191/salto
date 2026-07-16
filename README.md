@@ -17,8 +17,8 @@ All three phases below are implemented — **v1 is feature-complete**.
 **Phase 1 — Setup & manual grid**
 - CRUD for **programs**, events, coaches, classes, and sessions — you enter your gym's structure once
 - A one-click (and one-click-removable) fictional example gym to explore before entering your own
-- A class belongs to a **program** and defines what it does: each event it attends, how long it spends there (per class, not global), and whether that event must come **first** (warm-up), **last** (cool-down) or anywhere
-- The schedule grid: classes as columns, time as 5-minute rows. Each column is a *lane* that can run several classes back to back, each on its own time window — so a class is never forced to fill the whole evening
+- Every **event** carries its own duration and a shared/exclusive tag; a class belongs to a **program** and lists the events it's *eligible* for plus its period, warm-up and cool-down lengths
+- The schedule grid: classes as columns, time as 5-minute rows, one per week with a Week 1–4 switcher, plus a coverage panel showing which events each class still needs
 - Hand-editing for cleanup: drag a block's body to move it, its edge to resize, paint into empty rows, erase. A live tooltip says what the drag will do; a move that would collide is refused rather than eating your work
 - Conflict highlighting: overlapping classes in a lane, a double-booked coach, an over-capacity event
 - Data persistence
@@ -26,7 +26,7 @@ All three phases below are implemented — **v1 is feature-complete**.
 - First-run admin account creation + login
 
 **Phase 2 — Auto-generation** (the primary path)
-- Add a session's classes by program or individually, hit **Generate**, and get a complete conflict-free rotation: every class visits all its events for their full durations inside its own window, warm-ups first and cool-downs last, and no two classes ever share an apparatus at the same moment
+- Add a session's classes, hit **Generate**, and get a **four-week rotation plan**: each week draws a different mix of each class's eligible events, every eligible event is hit at least twice across the four weeks, warm-ups lead and cool-downs close, and no two classes are ever on the same exclusive apparatus at once. Lock a week and re-randomize the rest; gaps that can't be filled are flagged in plain language
 - Clear reporting of unmet constraints when generation fails
 - "Shuffle" — regenerate with a different seed for alternative layouts
 - Lock cells and regenerate around them

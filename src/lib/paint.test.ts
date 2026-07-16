@@ -39,7 +39,7 @@ const placement = (
   from: string,
   to: string,
   blocks: EventBlock[] = [],
-): Placement => ({ id, classId, columnIndex, startMin: T(from), endMin: T(to), blocks })
+): Placement => ({ id, classId, columnIndex, week: 1, startMin: T(from), endMin: T(to), blocks })
 
 const schedule = (placements: Placement[]): Schedule => ({ placements })
 

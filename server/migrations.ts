@@ -374,6 +374,103 @@ CREATE TABLE programs (
       }
     },
   },
+  {
+    // The 4-week rotation-plan model. Events gain a per-visit duration and a
+    // shared/exclusive tag; classes gain an eligible-events list and their
+    // period / warm-up / cool-down lengths; a session's grid becomes four
+    // weeks (placements gain a week), with per-week locks and coverage
+    // warnings on the session.
+    //
+    // Converting the old model:
+    // - An event's per-visit duration is inferred from the class durations
+    //   it had (the shortest any class gave it), else a 10-min default.
+    // - shared = "was this event unlimited or floor-fits-many?" — an old
+    //   capacity of NULL or >1 becomes shared; capacity 1 becomes exclusive.
+    //   capacity is then kept in sync (shared → NULL, exclusive → 1) so the
+    //   existing capacity-based solver keeps working unchanged.
+    // - A class's FIRST event becomes its warm-up, its LAST its cool-down,
+    //   and its ANY events its eligible list; the period is the old total.
+    // - Existing single-week schedules become week 1 of the plan.
+    name: 'rotation-plans',
+    up: (db) => {
+      // --- Events: duration + shared ---
+      db.exec('ALTER TABLE events ADD COLUMN duration_minutes INTEGER NOT NULL DEFAULT 10')
+      db.exec('ALTER TABLE events ADD COLUMN shared INTEGER NOT NULL DEFAULT 0')
+
+      // Shortest per-class duration seen for each event, to seed its per-visit
+      // duration honestly rather than flattening everything to 10.
+      const durationSeen = new Map<number, number>()
+      const classRows = db.prepare('SELECT id, required_events FROM groups').all() as {
+        id: number
+        required_events: string
+      }[]
+      for (const row of classRows) {
+        for (const e of JSON.parse(row.required_events) as { eventId: number; duration: number }[]) {
+          const prev = durationSeen.get(e.eventId)
+          if (prev === undefined || e.duration < prev) durationSeen.set(e.eventId, e.duration)
+        }
+      }
+      const events = db.prepare('SELECT id, capacity FROM events').all() as {
+        id: number
+        capacity: number | null
+      }[]
+      const setEvent = db.prepare(
+        'UPDATE events SET duration_minutes = ?, shared = ?, capacity = ? WHERE id = ?',
+      )
+      for (const e of events) {
+        const shared = e.capacity === null || e.capacity > 1 ? 1 : 0
+        const duration = durationSeen.get(e.id) ?? 10
+        // capacity mirrors shared from here on: the solver reads capacity.
+        setEvent.run(duration, shared, shared ? null : 1, e.id)
+      }
+
+      // --- Classes: eligible events, period, warm-up, cool-down ---
+      db.exec("ALTER TABLE groups ADD COLUMN eligible_events TEXT NOT NULL DEFAULT '[]'")
+      db.exec('ALTER TABLE groups ADD COLUMN period_minutes INTEGER NOT NULL DEFAULT 45')
+      db.exec(
+        'ALTER TABLE groups ADD COLUMN warmup_event_id INTEGER REFERENCES events(id) ON DELETE SET NULL',
+      )
+      db.exec('ALTER TABLE groups ADD COLUMN warmup_minutes INTEGER NOT NULL DEFAULT 0')
+      db.exec(
+        'ALTER TABLE groups ADD COLUMN cooldown_event_id INTEGER REFERENCES events(id) ON DELETE SET NULL',
+      )
+      db.exec('ALTER TABLE groups ADD COLUMN cooldown_minutes INTEGER NOT NULL DEFAULT 0')
+
+      const setClass = db.prepare(
+        `UPDATE groups SET eligible_events = ?, period_minutes = ?, warmup_event_id = ?,
+                           warmup_minutes = ?, cooldown_event_id = ?, cooldown_minutes = ?
+         WHERE id = ?`,
+      )
+      for (const row of classRows) {
+        const reqs = JSON.parse(row.required_events) as {
+          eventId: number
+          duration: number
+          position: 'FIRST' | 'ANY' | 'LAST'
+        }[]
+        const first = reqs.find((r) => r.position === 'FIRST')
+        const last = reqs.find((r) => r.position === 'LAST')
+        const middle = reqs.filter((r) => r.position === 'ANY')
+        const period = reqs.reduce((sum, r) => sum + r.duration, 0) || 45
+        setClass.run(
+          JSON.stringify(middle.map((r) => r.eventId)),
+          period,
+          first?.eventId ?? null,
+          first?.duration ?? 0,
+          last?.eventId ?? null,
+          last?.duration ?? 0,
+          row.id,
+        )
+      }
+      db.exec('ALTER TABLE groups DROP COLUMN required_events')
+
+      // --- Sessions: 4-week plan scaffolding ---
+      db.exec("ALTER TABLE sessions ADD COLUMN week_locks TEXT NOT NULL DEFAULT '[false,false,false,false]'")
+      db.exec("ALTER TABLE sessions ADD COLUMN plan_warnings TEXT NOT NULL DEFAULT '[]'")
+      // Existing placements are week 1 of their session's plan.
+      db.exec('ALTER TABLE placements ADD COLUMN week INTEGER NOT NULL DEFAULT 1')
+      db.exec('CREATE INDEX idx_placements_session_week ON placements(session_id, week)')
+    },
+  },
 ]
 
 export function runMigrations(db: DatabaseSync, upTo: number = MIGRATIONS.length): void {

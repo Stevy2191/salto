@@ -3,15 +3,13 @@ import type { DatabaseSync } from 'node:sqlite'
 import type {
   ClassWindow,
   Coach,
-  EventPosition,
   GymClass,
   GymEvent,
   Program,
-  RequiredEvent,
   Session,
 } from '../../shared/types.ts'
-import { EVENT_POSITIONS } from '../../shared/types.ts'
-import { formatTime, isSnapped, parseTime } from '../../shared/slots.ts'
+import { PLAN_WEEKS } from '../../shared/types.ts'
+import { SLOT_MINUTES, formatTime, isSnapped, parseTime } from '../../shared/slots.ts'
 import { isHexColor, nextPaletteColor } from '../../shared/colors.ts'
 import { isIsoDate } from '../../shared/dates.ts'
 import {
@@ -35,7 +33,10 @@ import { withTransaction } from '../tx.ts'
 interface EventRow {
   id: number
   name: string
+  /** Kept in sync with `shared` (shared → NULL, exclusive → 1) for the solver. */
   capacity: number | null
+  duration_minutes: number
+  shared: number
   active: number
   color: string
   is_sample: number
@@ -54,10 +55,13 @@ interface ClassRow {
   name: string
   program_id: number | null
   priority: number
-  required_events: string
+  eligible_events: string
+  period_minutes: number
+  warmup_event_id: number | null
+  warmup_minutes: number
+  cooldown_event_id: number | null
+  cooldown_minutes: number
   assigned_coaches: string
-  default_start_time: string | null
-  default_end_time: string | null
   is_sample: number
 }
 
@@ -76,15 +80,18 @@ interface SessionRow {
   start_time: string
   end_time: string
   column_count: number
+  week_locks: string
+  plan_warnings: string
   absent_coaches: string
   unavailable_events: string
   is_sample: number
-  /** Derived, not stored: how many classes the grid actually holds. */
+  /** Derived, not stored: how many distinct classes attend, any week. */
   class_count: number
 }
 
-// Attendance lives in the grid now, so a session's class count is derived
-// from its placements rather than kept as a second source of truth.
+// Attendance lives in the plan now, so a session's class count is derived
+// from its placements (across all weeks) rather than kept as a second
+// source of truth.
 const SESSION_SELECT = `SELECT s.*, (
   SELECT COUNT(DISTINCT class_id) FROM placements WHERE session_id = s.id
 ) AS class_count FROM sessions s`
@@ -92,7 +99,8 @@ const SESSION_SELECT = `SELECT s.*, (
 const toEvent = (r: EventRow): GymEvent => ({
   id: r.id,
   name: r.name,
-  capacity: r.capacity,
+  duration: r.duration_minutes,
+  shared: r.shared === 1,
   active: r.active === 1,
   color: r.color,
   isSample: r.is_sample === 1,
@@ -111,9 +119,12 @@ const toClass = (r: ClassRow): GymClass => ({
   name: r.name,
   programId: r.program_id,
   priority: r.priority,
-  requiredEvents: JSON.parse(r.required_events) as RequiredEvent[],
-  defaultStartTime: r.default_start_time,
-  defaultEndTime: r.default_end_time,
+  eligibleEventIds: JSON.parse(r.eligible_events) as number[],
+  periodMinutes: r.period_minutes,
+  warmupEventId: r.warmup_event_id,
+  warmupMinutes: r.warmup_minutes,
+  cooldownEventId: r.cooldown_event_id,
+  cooldownMinutes: r.cooldown_minutes,
   assignedCoaches: JSON.parse(r.assigned_coaches) as number[],
   isSample: r.is_sample === 1,
 })
@@ -169,6 +180,8 @@ const toSession = (r: SessionRow): Session => ({
   endTime: r.end_time,
   columnCount: r.column_count,
   classCount: r.class_count,
+  weekLocks: JSON.parse(r.week_locks) as boolean[],
+  planWarnings: JSON.parse(r.plan_warnings) as string[],
   absentCoaches: JSON.parse(r.absent_coaches) as number[],
   unavailableEvents: JSON.parse(r.unavailable_events) as number[],
   isSample: r.is_sample === 1,
@@ -176,7 +189,8 @@ const toSession = (r: SessionRow): Session => ({
 
 function parseEvent(body: unknown): {
   name: string
-  capacity: number | null
+  duration: number
+  shared: boolean
   active: boolean
   color?: string
 } {
@@ -188,17 +202,21 @@ function parseEvent(body: unknown): {
     }
     color = obj.color.toUpperCase()
   }
+  const duration = obj.duration === undefined ? 10 : reqInt(obj.duration, 'duration', 5, 8 * 60)
+  if (duration % SLOT_MINUTES !== 0) {
+    throw new ApiError(400, `duration must be a multiple of ${SLOT_MINUTES} minutes`)
+  }
   return {
     name: reqString(obj.name, 'name'),
-    // Omitted or null = no limit on simultaneous classes.
-    capacity:
-      obj.capacity === undefined || obj.capacity === null
-        ? null
-        : reqInt(obj.capacity, 'capacity', 1, 20),
+    duration,
+    shared: obj.shared === undefined ? false : reqBool(obj.shared, 'shared'),
     active: obj.active === undefined ? true : reqBool(obj.active, 'active'),
     color,
   }
 }
+
+/** capacity mirrors shared for the solver: shared → unlimited, else one. */
+const capacityFor = (shared: boolean) => (shared ? null : 1)
 
 /** Default for new events: the next palette color not yet in use. */
 function defaultEventColor(db: DatabaseSync): string {
@@ -219,43 +237,64 @@ function parseCoach(body: unknown): { name: string; specialties: number[]; avail
   }
 }
 
+/** An optional fixed block (warm-up / cool-down): an event and its minutes. */
+function optBlock(
+  obj: Record<string, unknown>,
+  eventField: string,
+  minutesField: string,
+  what: string,
+): { eventId: number | null; minutes: number } {
+  const rawId = obj[eventField]
+  const eventId =
+    rawId === undefined || rawId === null ? null : reqInt(rawId, eventField, 1, MAX_ID)
+  const minutes = obj[minutesField] === undefined ? 0 : reqInt(obj[minutesField], minutesField, 0, 8 * 60)
+  if (minutes % SLOT_MINUTES !== 0) {
+    throw new ApiError(400, `${what} length must be a multiple of ${SLOT_MINUTES} minutes`)
+  }
+  if ((eventId === null) !== (minutes === 0)) {
+    throw new ApiError(400, `a ${what} needs both an event and a length, or neither`)
+  }
+  return { eventId, minutes }
+}
+
+const MAX_ID = Number.MAX_SAFE_INTEGER
+
 function parseClass(body: unknown): {
   name: string
   programId: number | null
   priority: number
-  requiredEvents: RequiredEvent[]
-  start: string | null
-  end: string | null
+  eligibleEventIds: number[]
+  periodMinutes: number
+  warmupEventId: number | null
+  warmupMinutes: number
+  cooldownEventId: number | null
+  cooldownMinutes: number
   assignedCoaches: number[]
 } {
   const obj = asObject(body)
-  const rawRequired = obj.requiredEvents ?? []
-  if (!Array.isArray(rawRequired)) throw new ApiError(400, 'requiredEvents must be an array')
-  const requiredEvents = rawRequired.map((entry): RequiredEvent => {
-    const e = asObject(entry)
-    const duration = reqInt(e.duration, 'requiredEvents.duration', 5, 24 * 60)
-    if (duration % 5 !== 0) {
-      throw new ApiError(400, 'requiredEvents.duration must be a multiple of 5 minutes')
-    }
-    const position = e.position ?? 'ANY'
-    if (!EVENT_POSITIONS.includes(position as EventPosition)) {
-      throw new ApiError(400, 'requiredEvents.position must be FIRST, ANY, or LAST')
-    }
-    return {
-      eventId: reqInt(e.eventId, 'requiredEvents.eventId', 1, Number.MAX_SAFE_INTEGER),
-      duration,
-      position: position as EventPosition,
-    }
-  })
+  const eligibleEventIds = intArray(obj.eligibleEventIds, 'eligibleEventIds')
+  const periodMinutes = obj.periodMinutes === undefined ? 45 : reqInt(obj.periodMinutes, 'periodMinutes', 5, 12 * 60)
+  if (periodMinutes % SLOT_MINUTES !== 0) {
+    throw new ApiError(400, `periodMinutes must be a multiple of ${SLOT_MINUTES} minutes`)
+  }
+  const warmup = optBlock(obj, 'warmupEventId', 'warmupMinutes', 'warm-up')
+  const cooldown = optBlock(obj, 'cooldownEventId', 'cooldownMinutes', 'cool-down')
+  if (warmup.minutes + cooldown.minutes > periodMinutes) {
+    throw new ApiError(400, "the warm-up and cool-down don't leave any time in the period")
+  }
   return {
     name: reqString(obj.name, 'name'),
     programId:
       obj.programId === undefined || obj.programId === null
         ? null
-        : reqInt(obj.programId, 'programId', 1, Number.MAX_SAFE_INTEGER),
+        : reqInt(obj.programId, 'programId', 1, MAX_ID),
     priority: obj.priority === undefined ? 0 : reqInt(obj.priority, 'priority', 0, 100),
-    requiredEvents,
-    ...optWindow(obj, 'a class'),
+    eligibleEventIds,
+    periodMinutes,
+    warmupEventId: warmup.eventId,
+    warmupMinutes: warmup.minutes,
+    cooldownEventId: cooldown.eventId,
+    cooldownMinutes: cooldown.minutes,
     assignedCoaches: intArray(obj.assignedCoaches, 'assignedCoaches'),
   }
 }
@@ -334,8 +373,17 @@ export function entityRoutes(db: DatabaseSync): Router {
   router.post('/events', (req, res) => {
     const e = parseEvent(req.body)
     const result = db
-      .prepare('INSERT INTO events (name, capacity, active, color) VALUES (?, ?, ?, ?)')
-      .run(e.name, e.capacity, e.active ? 1 : 0, e.color ?? defaultEventColor(db))
+      .prepare(
+        'INSERT INTO events (name, duration_minutes, shared, capacity, active, color) VALUES (?, ?, ?, ?, ?, ?)',
+      )
+      .run(
+        e.name,
+        e.duration,
+        e.shared ? 1 : 0,
+        capacityFor(e.shared),
+        e.active ? 1 : 0,
+        e.color ?? defaultEventColor(db),
+      )
     const row = db.prepare('SELECT * FROM events WHERE id = ?').get(result.lastInsertRowid) as unknown as EventRow
     res.status(201).json({ event: toEvent(row) })
   })
@@ -347,9 +395,13 @@ export function entityRoutes(db: DatabaseSync): Router {
       | { color: string }
       | undefined
     requireRow(existing, 'event')
-    db.prepare('UPDATE events SET name = ?, capacity = ?, active = ?, color = ? WHERE id = ?').run(
+    db.prepare(
+      'UPDATE events SET name = ?, duration_minutes = ?, shared = ?, capacity = ?, active = ?, color = ? WHERE id = ?',
+    ).run(
       e.name,
-      e.capacity,
+      e.duration,
+      e.shared ? 1 : 0,
+      capacityFor(e.shared),
       e.active ? 1 : 0,
       e.color ?? existing!.color,
       id,
@@ -362,22 +414,12 @@ export function entityRoutes(db: DatabaseSync): Router {
     const id = idParam(req.params.id)
     requireRow(db.prepare('SELECT id FROM events WHERE id = ?').get(id), 'event')
     withTransaction(db, () => {
+      // A deleted event drops out of every class's eligibility, and out of
+      // any warm-up/cool-down slot (the FK nulls those). Its schedule blocks
+      // cascade.
       db.prepare('DELETE FROM events WHERE id = ?').run(id)
       scrubIdFromJsonColumn(db, 'coaches', 'specialties', id)
-      // requiredEvents entries are objects, handled separately below.
-      const classes = db.prepare('SELECT id, required_events AS col FROM groups').all() as {
-        id: number
-        col: string
-      }[]
-      for (const c of classes) {
-        const entries = JSON.parse(c.col) as RequiredEvent[]
-        if (entries.some((r) => r.eventId === id)) {
-          db.prepare('UPDATE groups SET required_events = ? WHERE id = ?').run(
-            JSON.stringify(entries.filter((r) => r.eventId !== id)),
-            c.id,
-          )
-        }
-      }
+      scrubIdFromJsonColumn(db, 'groups', 'eligible_events', id)
     })
     res.status(204).end()
   })
@@ -483,18 +525,22 @@ export function entityRoutes(db: DatabaseSync): Router {
     requireProgram(c.programId)
     const result = db
       .prepare(
-        `INSERT INTO groups (name, program_id, priority, required_events, assigned_coaches,
-                             default_start_time, default_end_time)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO groups (name, program_id, priority, eligible_events, period_minutes,
+                             warmup_event_id, warmup_minutes, cooldown_event_id, cooldown_minutes,
+                             assigned_coaches)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         c.name,
         c.programId,
         c.priority,
-        JSON.stringify(c.requiredEvents),
+        JSON.stringify(c.eligibleEventIds),
+        c.periodMinutes,
+        c.warmupEventId,
+        c.warmupMinutes,
+        c.cooldownEventId,
+        c.cooldownMinutes,
         JSON.stringify(c.assignedCoaches),
-        c.start,
-        c.end,
       )
     const row = db.prepare('SELECT * FROM groups WHERE id = ?').get(result.lastInsertRowid) as unknown as ClassRow
     res.status(201).json({ class: toClass(row) })
@@ -506,17 +552,21 @@ export function entityRoutes(db: DatabaseSync): Router {
     requireRow(db.prepare('SELECT id FROM groups WHERE id = ?').get(id), 'class')
     requireProgram(c.programId)
     db.prepare(
-      `UPDATE groups SET name = ?, program_id = ?, priority = ?, required_events = ?,
-                         assigned_coaches = ?, default_start_time = ?, default_end_time = ?
+      `UPDATE groups SET name = ?, program_id = ?, priority = ?, eligible_events = ?,
+                         period_minutes = ?, warmup_event_id = ?, warmup_minutes = ?,
+                         cooldown_event_id = ?, cooldown_minutes = ?, assigned_coaches = ?
        WHERE id = ?`,
     ).run(
       c.name,
       c.programId,
       c.priority,
-      JSON.stringify(c.requiredEvents),
+      JSON.stringify(c.eligibleEventIds),
+      c.periodMinutes,
+      c.warmupEventId,
+      c.warmupMinutes,
+      c.cooldownEventId,
+      c.cooldownMinutes,
       JSON.stringify(c.assignedCoaches),
-      c.start,
-      c.end,
       id,
     )
     const row = db.prepare('SELECT * FROM groups WHERE id = ?').get(id) as unknown as ClassRow
@@ -577,9 +627,8 @@ export function entityRoutes(db: DatabaseSync): Router {
     res.json({ session: toSession(row!) })
   })
 
-  // `classes` is a convenience for creating a session with a starting grid:
-  // each class lands in its own column running the whole window, which is a
-  // sensible default to then edit down into real per-class windows.
+  // `classes` seeds attendance for the new plan: each class runs the whole
+  // session window in its own column, in every week, ready for Generate.
   router.post('/sessions', (req, res) => {
     const s = parseSession(req.body)
     const startMin = parseTime(s.startTime)!
@@ -592,10 +641,12 @@ export function entityRoutes(db: DatabaseSync): Router {
         .run(s.name, s.date, s.startTime, s.endTime, s.classes.length)
       const id = Number(result.lastInsertRowid)
       const insert = db.prepare(
-        'INSERT INTO placements (session_id, class_id, column_index, start_min, end_min) VALUES (?, ?, ?, ?, ?)',
+        'INSERT INTO placements (session_id, class_id, column_index, week, start_min, end_min) VALUES (?, ?, ?, ?, ?, ?)',
       )
       s.classes.forEach((classId, index) => {
-        insert.run(id, classId, index, startMin, endMin)
+        for (let week = 1; week <= PLAN_WEEKS; week++) {
+          insert.run(id, classId, index, week, startMin, endMin)
+        }
       })
       return id
     })
@@ -706,17 +757,18 @@ export function entityRoutes(db: DatabaseSync): Router {
       const sessionId = Number(inserted.lastInsertRowid)
       const placements = db
         .prepare(
-          'SELECT id, class_id, column_index, start_min, end_min FROM placements WHERE session_id = ?',
+          'SELECT id, class_id, column_index, week, start_min, end_min FROM placements WHERE session_id = ?',
         )
         .all(id) as {
         id: number
         class_id: number
         column_index: number
+        week: number
         start_min: number
         end_min: number
       }[]
       const insertPlacement = db.prepare(
-        'INSERT INTO placements (session_id, class_id, column_index, start_min, end_min) VALUES (?, ?, ?, ?, ?)',
+        'INSERT INTO placements (session_id, class_id, column_index, week, start_min, end_min) VALUES (?, ?, ?, ?, ?, ?)',
       )
       const insertBlock = db.prepare(
         'INSERT INTO event_blocks (placement_id, event_id, coach_id, start_min, end_min, locked) VALUES (?, ?, ?, ?, ?, 0)',
@@ -727,6 +779,7 @@ export function entityRoutes(db: DatabaseSync): Router {
             sessionId,
             p.class_id,
             p.column_index,
+            p.week,
             p.start_min + shift,
             p.end_min + shift,
           ).lastInsertRowid,

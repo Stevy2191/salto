@@ -237,10 +237,11 @@ describe('migration runner', () => {
     expect(db.prepare('SELECT COUNT(*) AS n FROM event_blocks').get()).toMatchObject({ n: 1 })
   })
 
-  it('puts existing classes under a General program and defaults events to ANY', () => {
+  it('puts existing classes under a General program', () => {
     const db = new DatabaseSync(':memory:')
     db.exec('PRAGMA foreign_keys = ON')
-    // A deployment from just before programs existed.
+    // A deployment from just before programs existed. Stop at the programs
+    // migration so we can observe it before rotation-plans reshapes classes.
     runMigrations(db, 7)
     db.prepare("INSERT INTO events (name, color) VALUES ('Vault', '#4E79A7')").run()
     db.prepare("INSERT INTO events (name, color) VALUES ('Beam', '#59A14F')").run()
@@ -250,7 +251,7 @@ describe('migration runner', () => {
     ).run()
     db.prepare("INSERT INTO groups (name, required_events) VALUES ('Boys Team', '[]')").run()
 
-    runMigrations(db)
+    runMigrations(db, 8)
 
     // One catch-all program, and every class is in it: a gym that never had
     // programs had exactly one.
@@ -261,22 +262,81 @@ describe('migration runner', () => {
       { name: 'Level 3', program_id: 1 },
       { name: 'Boys Team', program_id: 1 },
     ])
+    expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+  })
 
-    // Required events keep their durations and gain ANY — which is what
-    // they meant when order was unconstrained.
-    const required = JSON.parse(
-      (db.prepare('SELECT required_events AS r FROM groups WHERE id = 1').get() as { r: string }).r,
-    )
-    expect(required).toEqual([
-      { eventId: 1, duration: 30, position: 'ANY' },
-      { eventId: 2, duration: 15, position: 'ANY' },
+  it('rotation-plans converts events and required-events to the 4-week model', () => {
+    const db = new DatabaseSync(':memory:')
+    db.exec('PRAGMA foreign_keys = ON')
+    // A deployment from just before the 4-week plan model.
+    runMigrations(db, 8)
+    db.prepare("INSERT INTO programs (name) VALUES ('General')").run()
+    // Vault held for one length, an exclusive (limit 1) apparatus; Stretch a
+    // shared (no-limit) cool-down.
+    db.prepare("INSERT INTO events (name, capacity, color) VALUES ('Vault', 1, '#4E79A7')").run()
+    db.prepare("INSERT INTO events (name, capacity, color) VALUES ('Stretch', NULL, '#59A14F')").run()
+    // A class with a FIRST warm-up (Vault, oddly), a middle event, and a LAST
+    // cool-down — the three shapes the backfill has to place.
+    db.prepare(
+      `INSERT INTO groups (name, program_id, required_events) VALUES
+       ('Level 3', 1,
+        '[{"eventId":1,"duration":10,"position":"FIRST"},{"eventId":2,"duration":15,"position":"ANY"},{"eventId":2,"duration":10,"position":"LAST"}]')`,
+    ).run()
+    db.prepare(
+      "INSERT INTO groups (name, program_id, required_events) VALUES ('Empty', 1, '[]')",
+    ).run()
+    db.prepare(
+      `INSERT INTO sessions (name, date, start_time, end_time, column_count)
+       VALUES ('Monday', '2026-03-02', '16:00', '18:00', 1)`,
+    ).run()
+    db.prepare(
+      'INSERT INTO placements (session_id, class_id, column_index, start_min, end_min) VALUES (1, 1, 0, 960, 1080)',
+    ).run()
+
+    runMigrations(db)
+
+    // Events gain a duration (seeded from the shortest length seen) and a
+    // shared flag mirrored from capacity.
+    const events = db
+      .prepare('SELECT name, duration_minutes AS d, shared, capacity FROM events ORDER BY id')
+      .all()
+    expect(events).toEqual([
+      { name: 'Vault', d: 10, shared: 0, capacity: 1 },
+      // Stretch was never in a required list, so it keeps the default 10.
+      { name: 'Stretch', d: 10, shared: 1, capacity: null },
     ])
 
-    // Class-level default times exist and start unset.
-    const cols = (
-      db.prepare("SELECT name FROM pragma_table_info('groups')").all() as { name: string }[]
-    ).map((c) => c.name)
-    expect(cols).toEqual(expect.arrayContaining(['program_id', 'default_start_time', 'default_end_time']))
+    // required_events is gone, converted to eligibility + anchors. FIRST →
+    // warm-up, LAST → cool-down, ANY → eligible; period is the sum of lengths.
+    expect(
+      db.prepare("SELECT name FROM pragma_table_info('groups')").all() as { name: string }[],
+    ).not.toContainEqual({ name: 'required_events' })
+    const l3 = db
+      .prepare(
+        `SELECT eligible_events AS eligible, period_minutes AS period, warmup_event_id AS w,
+                warmup_minutes AS wm, cooldown_event_id AS c, cooldown_minutes AS cm
+         FROM groups WHERE id = 1`,
+      )
+      .get() as Record<string, unknown>
+    expect(l3).toEqual({
+      eligible: '[2]',
+      period: 35, // 10 + 15 + 10
+      w: 1,
+      wm: 10,
+      c: 2,
+      cm: 10,
+    })
+    // A class with no required events falls back to a 45-minute period.
+    expect(db.prepare('SELECT period_minutes AS p FROM groups WHERE id = 2').get()).toMatchObject({
+      p: 45,
+    })
+
+    // Sessions gain plan scaffolding and existing placements become week 1.
+    expect(db.prepare('SELECT week_locks AS wl, plan_warnings AS pw FROM sessions').get()).toEqual({
+      wl: '[false,false,false,false]',
+      pw: '[]',
+    })
+    expect(db.prepare('SELECT week FROM placements').get()).toMatchObject({ week: 1 })
     expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
   })
 

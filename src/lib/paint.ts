@@ -274,6 +274,9 @@ export function addPlacement(
   endMin: number,
 ): Schedule | null {
   if (!columnFree(schedule, columnIndex, startMin, endMin)) return null
+  // A Schedule is one week of the plan; a new lane joins whatever week the
+  // grid is already showing.
+  const week = schedule.placements[0]?.week ?? 1
   return {
     placements: [
       ...schedule.placements,
@@ -281,6 +284,7 @@ export function addPlacement(
         id: nextLocalPlacementId--,
         classId,
         columnIndex,
+        week,
         startMin,
         endMin,
         blocks: [],

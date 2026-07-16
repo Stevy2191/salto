@@ -5,17 +5,19 @@ import { withTransaction } from '../tx.ts'
 import { EVENT_PALETTE } from '../../shared/colors.ts'
 import { addDays, dayOfWeekOf, todayIsoDate } from '../../shared/dates.ts'
 import { parseTime } from '../../shared/slots.ts'
-import type { EventPosition } from '../../shared/types.ts'
+import { PLAN_WEEKS } from '../../shared/types.ts'
 
-// Clearly fictional sample data so a new gym can explore the app before
-// entering its own. Every row is flagged is_sample so it can be removed
-// in one click.
+// Clearly fictional sample data so a new gym can explore before entering its
+// own. Every row is is_sample so it can be removed in one click.
 //
-// It is built to demonstrate the whole model rather than to look tidy:
-// three programs on staggered clocks, classes with per-class durations,
-// warm-up/cool-down anchors, and — the point of the generator — a Tumble
-// Trak that classes from different programs all contend for. Hitting
-// Generate on it should produce a clean, conflict-free rotation.
+// Built to demonstrate the whole 4-week model rather than to look tidy:
+// - shared events (Warm-up, Stretch, Conditioning) that many classes use at
+//   once, and exclusive apparatus that only one class may use at a time;
+// - a Tumble Trak that classes from *different programs* are all eligible
+//   for and must contend over — the point of the generator;
+// - varied per-event durations and per-class period/warm-up/cool-down.
+// It ships with classes gathered and nothing generated: pressing Generate
+// produces the 4-week plan, which is the demo.
 
 function sampleLoaded(db: DatabaseSync): boolean {
   for (const table of ['events', 'coaches', 'groups', 'sessions', 'programs']) {
@@ -30,34 +32,39 @@ const at = (hhmm: string) => parseTime(hhmm)!
 interface ClassSpec {
   name: string
   priority: number
-  /** [event, minutes, position] */
-  events: [string, number, EventPosition][]
+  periodMinutes: number
+  warmup: [string, number] // [event, minutes]
+  cooldown: [string, number]
+  eligible: string[]
   coach: string
-  /** Overrides the program's clock. */
-  window?: [string, string]
 }
 
 function seed(db: DatabaseSync): void {
+  // --- Events: [name, durationPerVisit, shared?] ---
   const insertEvent = db.prepare(
-    'INSERT INTO events (name, capacity, active, color, is_sample) VALUES (?, ?, 1, ?, 1)',
+    'INSERT INTO events (name, duration_minutes, shared, capacity, active, color, is_sample) VALUES (?, ?, ?, ?, 1, ?, 1)',
   )
   const eventIds: Record<string, number> = {}
-  // Apparatus fit one class at a time — that is what makes the schedule a
-  // puzzle. Warm-up and Stretch are open mat space with no limit, which is
-  // what lets every class start and finish on them.
-  const sampleEvents: [string, number | null][] = [
-    ['Warm-up', null],
-    ['Tumble Trak', 1],
-    ['Vault', 1],
-    ['Bars', 1],
-    ['Beam', 1],
-    ['Floor', 2],
-    ['Trampoline', 1],
-    ['Stretch', null],
+  const sampleEvents: [string, number, boolean][] = [
+    ['Warm-up', 10, true], // shared: everyone warms up together
+    ['Tumble Trak', 15, false], // exclusive, contested across programs
+    ['PS Vault', 10, false],
+    ['PS Bars', 10, false],
+    ['PS Floor', 10, false],
+    ['Rec Beams', 10, false],
+    ['Trampoline', 15, false],
+    ['Conditioning', 10, true], // shared
+    ['Stretch', 10, true], // shared: cool-down
   ]
-  sampleEvents.forEach(([name, capacity], index) => {
+  sampleEvents.forEach(([name, duration, shared], index) => {
     eventIds[name] = Number(
-      insertEvent.run(name, capacity, EVENT_PALETTE[index % EVENT_PALETTE.length]!).lastInsertRowid,
+      insertEvent.run(
+        name,
+        duration,
+        shared ? 1 : 0,
+        shared ? null : 1,
+        EVENT_PALETTE[index % EVENT_PALETTE.length]!,
+      ).lastInsertRowid,
     )
   })
 
@@ -77,128 +84,63 @@ function seed(db: DatabaseSync): void {
     'INSERT INTO programs (name, default_start_time, default_end_time, is_sample) VALUES (?, ?, ?, 1)',
   )
   const insertClass = db.prepare(
-    `INSERT INTO groups (name, program_id, priority, required_events, assigned_coaches,
-                         default_start_time, default_end_time, is_sample)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+    `INSERT INTO groups (name, program_id, priority, eligible_events, period_minutes,
+                         warmup_event_id, warmup_minutes, cooldown_event_id, cooldown_minutes,
+                         assigned_coaches, is_sample)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
   )
   const classIds: Record<string, number> = {}
 
-  // Three programs on staggered clocks. Preschool is short and early, Rec
-  // Gym overlaps it, Team runs long into the evening — so the Tumble Trak
-  // is genuinely fought over in the middle.
+  // All classes run the same 16:00–17:15 clock, so the exclusive Tumble Trak
+  // is genuinely fought over. Preschool spends longer per event; Rec Gym
+  // rotates faster and has more eligible apparatus than fit one period —
+  // exactly what the 4-week coverage spread is for.
   const programs: { name: string; window: [string, string]; classes: ClassSpec[] }[] = [
     {
       name: 'Preschool',
-      window: ['16:00', '17:00'],
+      window: ['16:00', '17:15'],
       classes: [
         {
           name: 'Tiny Tot 1',
           priority: 0,
+          periodMinutes: 60,
+          warmup: ['Warm-up', 10],
+          cooldown: ['Stretch', 10],
+          eligible: ['Tumble Trak', 'PS Vault', 'PS Floor'],
           coach: 'Dana Marsh',
-          // 15 min per event — little ones stay put longer.
-          events: [
-            ['Warm-up', 15, 'FIRST'],
-            ['Tumble Trak', 15, 'ANY'],
-            ['Floor', 15, 'ANY'],
-            ['Stretch', 10, 'LAST'],
-          ],
         },
         {
           name: 'Tiny Tot 2',
           priority: 0,
+          periodMinutes: 60,
+          warmup: ['Warm-up', 10],
+          cooldown: ['Stretch', 10],
+          eligible: ['Tumble Trak', 'PS Bars', 'PS Floor'],
           coach: 'Dana Marsh',
-          events: [
-            ['Warm-up', 15, 'FIRST'],
-            ['Trampoline', 15, 'ANY'],
-            ['Tumble Trak', 15, 'ANY'],
-            ['Stretch', 10, 'LAST'],
-          ],
         },
       ],
     },
     {
       name: 'Rec Gym',
-      window: ['16:30', '18:00'],
+      window: ['16:00', '17:15'],
       classes: [
         {
           name: 'Rec Gym 1',
           priority: 1,
+          periodMinutes: 60,
+          warmup: ['Warm-up', 10],
+          cooldown: ['Conditioning', 10],
+          eligible: ['Tumble Trak', 'Rec Beams', 'PS Vault', 'Trampoline'],
           coach: 'Sam Ortiz',
-          // 10 min per event — rec classes rotate faster.
-          events: [
-            ['Warm-up', 10, 'FIRST'],
-            ['Vault', 10, 'ANY'],
-            ['Tumble Trak', 10, 'ANY'],
-            ['Floor', 10, 'ANY'],
-            ['Stretch', 10, 'LAST'],
-          ],
         },
         {
           name: 'Rec Gym 2',
           priority: 1,
-          coach: 'Sam Ortiz',
-          events: [
-            ['Warm-up', 10, 'FIRST'],
-            ['Trampoline', 10, 'ANY'],
-            ['Tumble Trak', 10, 'ANY'],
-            ['Beam', 10, 'ANY'],
-            ['Stretch', 10, 'LAST'],
-          ],
-        },
-        {
-          name: 'Rec Gym 3',
-          priority: 1,
+          periodMinutes: 60,
+          warmup: ['Warm-up', 10],
+          cooldown: ['Conditioning', 10],
+          eligible: ['Tumble Trak', 'Rec Beams', 'PS Bars', 'Trampoline'],
           coach: 'Jules Baptiste',
-          // Arrives late — a class on its own clock inside its program.
-          window: ['17:00', '18:30'],
-          events: [
-            ['Warm-up', 10, 'FIRST'],
-            ['Floor', 15, 'ANY'],
-            ['Bars', 15, 'ANY'],
-            ['Stretch', 10, 'LAST'],
-          ],
-        },
-      ],
-    },
-    {
-      name: 'Team',
-      window: ['17:30', '20:00'],
-      classes: [
-        {
-          name: 'Level 3 Girls',
-          priority: 2,
-          coach: 'Riley Cho',
-          events: [
-            ['Warm-up', 20, 'FIRST'],
-            ['Vault', 30, 'ANY'],
-            ['Bars', 30, 'ANY'],
-            ['Beam', 30, 'ANY'],
-            ['Stretch', 15, 'LAST'],
-          ],
-        },
-        {
-          name: 'Level 5 Girls',
-          priority: 2,
-          coach: 'Riley Cho',
-          events: [
-            ['Warm-up', 20, 'FIRST'],
-            ['Bars', 30, 'ANY'],
-            ['Beam', 30, 'ANY'],
-            ['Floor', 30, 'ANY'],
-            ['Stretch', 15, 'LAST'],
-          ],
-        },
-        {
-          name: 'Boys Team',
-          priority: 2,
-          coach: 'Jules Baptiste',
-          events: [
-            ['Warm-up', 20, 'FIRST'],
-            ['Vault', 30, 'ANY'],
-            ['Tumble Trak', 30, 'ANY'],
-            ['Floor', 30, 'ANY'],
-            ['Stretch', 15, 'LAST'],
-          ],
         },
       ],
     },
@@ -209,75 +151,51 @@ function seed(db: DatabaseSync): void {
       insertProgram.run(program.name, program.window[0], program.window[1]).lastInsertRowid,
     )
     for (const spec of program.classes) {
-      const requiredEvents = spec.events.map(([name, duration, position]) => ({
-        eventId: eventIds[name]!,
-        duration,
-        position,
-      }))
       classIds[spec.name] = Number(
         insertClass.run(
           spec.name,
           programId,
           spec.priority,
-          JSON.stringify(requiredEvents),
+          JSON.stringify(spec.eligible.map((n) => eventIds[n]!)),
+          spec.periodMinutes,
+          eventIds[spec.warmup[0]]!,
+          spec.warmup[1],
+          eventIds[spec.cooldown[0]]!,
+          spec.cooldown[1],
           JSON.stringify([coachIds[spec.coach]!]),
-          spec.window?.[0] ?? null,
-          spec.window?.[1] ?? null,
         ).lastInsertRowid,
       )
     }
   }
 
-  // Sessions are per-date. Seed the next Monday and Wednesday from today so
-  // the sample gym always shows upcoming practices, never stale ones. They
-  // arrive with every class gathered and no blocks: hitting Generate is
-  // the point of the demo.
+  // Sessions are per-date. Seed the next Monday and Wednesday. Each gathers
+  // its classes onto the shared clock in weeks 1..PLAN_WEEKS, ungenerated.
   const insertSession = db.prepare(
     'INSERT INTO sessions (name, date, start_time, end_time, column_count, is_sample) VALUES (?, ?, ?, ?, ?, 1)',
   )
   const insertPlacement = db.prepare(
-    'INSERT INTO placements (session_id, class_id, column_index, start_min, end_min) VALUES (?, ?, ?, ?, ?)',
+    'INSERT INTO placements (session_id, class_id, column_index, week, start_min, end_min) VALUES (?, ?, ?, ?, ?, ?)',
   )
   const today = todayIsoDate()
   const todayDow = dayOfWeekOf(today)
   const nextWeekday = (dow: number) => addDays(today, (dow - todayDow + 7) % 7)
 
-  const windowOf = (name: string): [number, number] => {
-    for (const program of programs) {
-      const spec = program.classes.find((c) => c.name === name)
-      if (spec) {
-        const [start, end] = spec.window ?? program.window
-        return [at(start), at(end)]
-      }
-    }
-    throw new Error(`no window for ${name}`)
-  }
-
-  /** Same packing the server does when classes are gathered. */
   const buildSession = (name: string, date: string, names: string[]) => {
-    const sessionId = Number(insertSession.run(name, date, '16:00', '20:00', 0).lastInsertRowid)
-    const taken: { column: number; start: number; end: number }[] = []
-    for (const className of names) {
-      const [start, end] = windowOf(className)
-      let column = 0
-      while (taken.some((t) => t.column === column && start < t.end && t.start < end)) column++
-      insertPlacement.run(sessionId, classIds[className]!, column, start, end)
-      taken.push({ column, start, end })
-    }
-    db.prepare('UPDATE sessions SET column_count = ? WHERE id = ?').run(
-      taken.reduce((max, t) => Math.max(max, t.column + 1), 0),
-      sessionId,
+    const start = at('16:00')
+    const end = at('17:15')
+    const sessionId = Number(
+      insertSession.run(name, date, '16:00', '17:15', names.length).lastInsertRowid,
     )
+    names.forEach((className, column) => {
+      for (let week = 1; week <= PLAN_WEEKS; week++) {
+        insertPlacement.run(sessionId, classIds[className]!, column, week, start, end)
+      }
+    })
   }
 
-  const everyClass = programs.flatMap((p) => p.classes.map((c) => c.name))
+  const everyClass = Object.keys(classIds)
   buildSession('Monday Team Practice', nextWeekday(1), everyClass)
-  // Wednesday is a lighter night: preschool and rec only.
-  buildSession(
-    'Wednesday Practice',
-    nextWeekday(3),
-    everyClass.filter((n) => !n.includes('Team') && !n.includes('Level')),
-  )
+  buildSession('Wednesday Practice', nextWeekday(3), everyClass)
 }
 
 export function exampleGymRoutes(db: DatabaseSync): Router {

@@ -8,8 +8,18 @@
 export interface GymEvent {
   id: number
   name: string
-  /** Max classes that can use this event simultaneously; null = no limit. */
-  capacity: number | null
+  /**
+   * How long a class spends here per visit, in minutes — a facility-wide
+   * property of the station, not per class. A multiple of SLOT_MINUTES.
+   */
+  duration: number
+  /**
+   * The collision rule. Exclusive (false, the default) means only one class
+   * may be on this event at a time — the constraint the planner solves.
+   * Shared (true) events hold any number at once: stretch, conditioning,
+   * open floor.
+   */
+  shared: boolean
   active: boolean
   /** Hex color (#RRGGBB) shown wherever the event appears. */
   color: string
@@ -69,17 +79,32 @@ export interface GymClass {
   programId: number | null
   /** Higher priority wins when conflicts arise. */
   priority: number
-  /** The class's structure, and the main input to generation. */
-  requiredEvents: RequiredEvent[]
   /**
-   * The class's own clock, overriding its program's. A window in a session
-   * resolves to: the class's times, else its program's, else the session's.
+   * The subset of facility events this class may use. Each week the planner
+   * draws from this list — the class does not visit all of them per period.
    */
-  defaultStartTime: string | null
-  defaultEndTime: string | null
+  eligibleEventIds: number[]
+  /** Total period length in minutes, a multiple of SLOT_MINUTES. */
+  periodMinutes: number
+  /** Optional fixed opening block (a warm-up, usually a shared event). */
+  warmupEventId: number | null
+  warmupMinutes: number
+  /** Optional fixed closing block (a cool-down, usually a shared event). */
+  cooldownEventId: number | null
+  cooldownMinutes: number
   /** Coach ids who travel with this class. */
   assignedCoaches: number[]
   isSample: boolean
+}
+
+/** A class's derived period budget: how much middle time and how it's spent. */
+export interface PeriodFit {
+  /** Minutes of period left for eligible events after warm-up and cool-down. */
+  middleMinutes: number
+  /** How many of the class's eligible events fit that middle time. */
+  eventsThatFit: number
+  /** True when even one eligible event doesn't fit the middle time. */
+  overflows: boolean
 }
 
 export interface Session {
@@ -96,14 +121,21 @@ export interface Session {
   endTime: string
   /** How many columns (lanes) the grid has. */
   columnCount: number
-  /** Read-only: how many distinct classes are placed in this session. */
+  /** Read-only: how many distinct classes attend this session. */
   classCount: number
+  /** Which of the 4 weeks are locked (index 0 = week 1). */
+  weekLocks: boolean[]
+  /** Plain-language coverage/collision gaps from the last generation. */
+  planWarnings: string[]
   /** Coaches marked absent for this session only (day-of change). */
   absentCoaches: number[]
   /** Events marked out for this session only (day-of change). */
   unavailableEvents: number[]
   isSample: boolean
 }
+
+/** How many weeks a rotation plan spans. */
+export const PLAN_WEEKS = 4
 
 /**
  * One event a class is doing for a span, inside its placement's window.
@@ -130,15 +162,31 @@ export interface Placement {
   id: number
   classId: number
   columnIndex: number
+  /** Which week (1..PLAN_WEEKS) of the plan this placement belongs to. */
+  week: number
   /** The class's own window, minutes since midnight, SLOT_MINUTES-snapped. */
   startMin: number
   endMin: number
   blocks: EventBlock[]
 }
 
-/** Everything the grid needs to render and save a session's schedule. */
+/** One week of the grid: the placements the grid renders and saves. */
 export interface Schedule {
   placements: Placement[]
+}
+
+/** How many times a class visits an eligible event across the whole plan. */
+export interface EventCoverage {
+  eventId: number
+  visits: number
+  /** Below the floor of 2 the planner could not reach. */
+  short: boolean
+}
+
+/** A class's coverage across the 4-week plan. */
+export interface ClassCoverage {
+  classId: number
+  events: EventCoverage[]
 }
 
 /** Where a class is placed, for showing whether its events fit. */

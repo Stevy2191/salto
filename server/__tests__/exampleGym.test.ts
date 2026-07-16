@@ -31,23 +31,24 @@ describe('example gym', () => {
     expect(sessions).toHaveLength(2)
     expect(events.every((e) => e.isSample)).toBe(true)
 
-    // Sample events mix limited and unlimited capacities.
-    expect(events.some((e) => e.capacity === null)).toBe(true)
-    expect(events.some((e) => e.capacity !== null)).toBe(true)
+    // Sample events mix shared and exclusive, and every duration lands on the
+    // 5-minute axis.
+    expect(events.some((e) => e.shared)).toBe(true)
+    expect(events.some((e) => !e.shared)).toBe(true)
+    expect(events.every((e) => isSnapped(e.duration) && e.duration > 0)).toBe(true)
 
     // Sessions sit on real, upcoming dates, listed chronologically.
     const today = todayIsoDate()
     expect(sessions.every((s) => isIsoDate(s.date) && s.date >= today)).toBe(true)
     expect([...sessions].sort((a, b) => a.date.localeCompare(b.date))).toEqual(sessions)
 
-    // Referential integrity: classes only require seeded events, and every
-    // required duration lands on the 5-minute axis.
+    // Referential integrity: classes are only eligible for seeded events, and
+    // their warm-up/cool-down anchors point at seeded events too.
     const eventIds = new Set(events.map((e) => e.id))
     for (const cls of classes) {
-      for (const req of cls.requiredEvents) {
-        expect(eventIds.has(req.eventId)).toBe(true)
-        expect(isSnapped(req.duration)).toBe(true)
-      }
+      for (const id of cls.eligibleEventIds) expect(eventIds.has(id)).toBe(true)
+      if (cls.warmupEventId !== null) expect(eventIds.has(cls.warmupEventId)).toBe(true)
+      if (cls.cooldownEventId !== null) expect(eventIds.has(cls.cooldownEventId)).toBe(true)
     }
 
     // Every session's grid is coherent: placements name seeded classes,
@@ -94,10 +95,9 @@ describe('example gym', () => {
     const events: GymEvent[] = (await request(app).get('/api/events').set('Cookie', cookie)).body
       .events
 
-    // Several programs, on staggered clocks.
-    expect(programs.length).toBeGreaterThanOrEqual(3)
+    // More than one program, each with a clock.
+    expect(programs.length).toBeGreaterThanOrEqual(2)
     expect(programs.every((p) => p.defaultStartTime && p.defaultEndTime)).toBe(true)
-    expect(new Set(programs.map((p) => p.defaultStartTime)).size).toBeGreaterThan(1)
 
     // Every class belongs to one, and every program has classes.
     expect(classes.every((c) => c.programId !== null)).toBe(true)
@@ -105,30 +105,29 @@ describe('example gym', () => {
       expect(classes.some((c) => c.programId === program.id)).toBe(true)
     }
 
-    // Warm-ups and cool-downs are anchored.
-    expect(classes.every((c) => c.requiredEvents.some((r) => r.position === 'FIRST'))).toBe(true)
-    expect(classes.every((c) => c.requiredEvents.some((r) => r.position === 'LAST'))).toBe(true)
+    // Warm-ups and cool-downs are anchored, with lengths.
+    expect(classes.every((c) => c.warmupEventId !== null && c.warmupMinutes > 0)).toBe(true)
+    expect(classes.every((c) => c.cooldownEventId !== null && c.cooldownMinutes > 0)).toBe(true)
 
-    // Durations are per class, not global: the same event is held for
-    // different lengths by different classes.
-    const perEvent = new Map<number, Set<number>>()
-    for (const c of classes) {
-      for (const r of c.requiredEvents) {
-        perEvent.set(r.eventId, (perEvent.get(r.eventId) ?? new Set()).add(r.duration))
-      }
-    }
-    expect([...perEvent.values()].some((durations) => durations.size > 1)).toBe(true)
+    // A class's eligible list can hold more events than fit one period — the
+    // reason coverage is spread across four weeks. Middle time is the period
+    // minus its warm-up and cool-down.
+    const byId = new Map(events.map((e) => [e.id, e]))
+    expect(
+      classes.some((c) => {
+        const middle = c.periodMinutes - c.warmupMinutes - c.cooldownMinutes
+        const fit = c.eligibleEventIds.reduce((sum, id) => sum + (byId.get(id)?.duration ?? 0), 0)
+        return fit > middle
+      }),
+    ).toBe(true)
 
-    // A one-at-a-time apparatus that classes from different programs all
-    // want — the contention the generator exists to resolve.
+    // A one-at-a-time apparatus that classes from different programs are all
+    // eligible for — the contention the generator exists to resolve.
     const trak = events.find((e) => e.name === 'Tumble Trak')!
-    expect(trak.capacity).toBe(1)
-    const wantTrak = classes.filter((c) => c.requiredEvents.some((r) => r.eventId === trak.id))
+    expect(trak.shared).toBe(false)
+    const wantTrak = classes.filter((c) => c.eligibleEventIds.includes(trak.id))
     expect(wantTrak.length).toBeGreaterThanOrEqual(3)
     expect(new Set(wantTrak.map((c) => c.programId)).size).toBeGreaterThan(1)
-
-    // A class on its own clock, overriding its program's.
-    expect(classes.some((c) => c.defaultStartTime !== null)).toBe(true)
   })
 
   it('arrives with classes gathered and nothing painted — Generate is the demo', async () => {
@@ -137,17 +136,20 @@ describe('example gym', () => {
       .sessions
     const monday = sessions.find((s) => s.name.startsWith('Monday'))!
 
-    const { schedule } = (
-      await request(app).get(`/api/sessions/${monday.id}/schedule`).set('Cookie', cookie)
-    ).body as { schedule: Schedule }
-
-    // Every class is in and has a window, packed into fewer lanes than
-    // classes — Preschool finishes before Team starts, so they share.
-    expect(schedule.placements.length).toBeGreaterThanOrEqual(8)
-    expect(monday.columnCount).toBeLessThan(schedule.placements.length)
-    expect(schedule.placements.every((p) => p.endMin > p.startMin)).toBe(true)
-    // Nothing is painted: the point is to press Generate.
-    expect(schedule.placements.flatMap((p) => p.blocks)).toEqual([])
+    // Each class runs the same clock, so each has its own lane; every week of
+    // the plan carries the same classes, ungenerated.
+    for (let week = 1; week <= 4; week++) {
+      const { schedule } = (
+        await request(app)
+          .get(`/api/sessions/${monday.id}/schedule?week=${week}`)
+          .set('Cookie', cookie)
+      ).body as { schedule: Schedule }
+      expect(schedule.placements.length).toBe(monday.columnCount)
+      expect(schedule.placements.length).toBeGreaterThan(0)
+      expect(schedule.placements.every((p) => p.endMin > p.startMin)).toBe(true)
+      // Nothing is painted: the point is to press Generate.
+      expect(schedule.placements.flatMap((p) => p.blocks)).toEqual([])
+    }
   })
 
   it('refuses to double-seed', async () => {

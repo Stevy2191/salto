@@ -1,18 +1,20 @@
 import { Router } from 'express'
 import type { DatabaseSync } from 'node:sqlite'
 import type { EventBlock, Placement, Schedule } from '../../shared/types.ts'
+import { PLAN_WEEKS } from '../../shared/types.ts'
 import { SLOT_MINUTES, isSnapped, overlaps, parseTime } from '../../shared/slots.ts'
 import { ApiError, asObject, idParam, reqBool, reqInt } from '../validate.ts'
 import { withTransaction } from '../tx.ts'
 
-// A session's schedule: columns (lanes) of class placements, each holding
-// explicit event blocks. Storage keeps the pre-rename `groups`/`class_id`
-// naming at the SQL layer only.
+// A session holds a 4-week rotation plan. Each week is one grid: columns
+// (lanes) of class placements, each holding explicit event blocks. Storage
+// keeps the pre-rename `groups`/`class_id` naming at the SQL layer only.
 
 interface PlacementRow {
   id: number
   class_id: number
   column_index: number
+  week: number
   start_min: number
   end_min: number
 }
@@ -27,19 +29,22 @@ interface BlockRow {
   locked: number
 }
 
-export function loadSchedule(db: DatabaseSync, sessionId: number): Schedule {
+const MAX_ID = Number.MAX_SAFE_INTEGER
+
+/** One week of a session's grid. Week defaults to 1 for the single-grid views. */
+export function loadSchedule(db: DatabaseSync, sessionId: number, week = 1): Schedule {
   const placements = db
     .prepare(
-      'SELECT id, class_id, column_index, start_min, end_min FROM placements WHERE session_id = ? ORDER BY column_index, start_min',
+      'SELECT id, class_id, column_index, week, start_min, end_min FROM placements WHERE session_id = ? AND week = ? ORDER BY column_index, start_min',
     )
-    .all(sessionId) as unknown as PlacementRow[]
+    .all(sessionId, week) as unknown as PlacementRow[]
   const blocks = db
     .prepare(
       `SELECT b.id, b.placement_id, b.event_id, b.coach_id, b.start_min, b.end_min, b.locked
        FROM event_blocks b JOIN placements p ON p.id = b.placement_id
-       WHERE p.session_id = ? ORDER BY b.start_min`,
+       WHERE p.session_id = ? AND p.week = ? ORDER BY b.start_min`,
     )
-    .all(sessionId) as unknown as BlockRow[]
+    .all(sessionId, week) as unknown as BlockRow[]
 
   const byPlacement = new Map<number, EventBlock[]>()
   for (const b of blocks) {
@@ -61,6 +66,7 @@ export function loadSchedule(db: DatabaseSync, sessionId: number): Schedule {
         id: p.id,
         classId: p.class_id,
         columnIndex: p.column_index,
+        week: p.week,
         startMin: p.start_min,
         endMin: p.end_min,
         blocks: byPlacement.get(p.id) ?? [],
@@ -85,10 +91,8 @@ interface ParsedPlacement {
   blocks: ParsedBlock[]
 }
 
-const MAX_ID = Number.MAX_SAFE_INTEGER
-
 /**
- * Validates the whole grid, not just field shapes: everything snaps to 5
+ * Validates one week's grid, not just field shapes: everything snaps to 5
  * minutes, class windows stay inside the session, placements in a column
  * never overlap, and blocks stay inside their class's window without
  * overlapping each other.
@@ -128,10 +132,7 @@ function parseSchedule(
       }
       if (bEnd <= bStart) throw new ApiError(400, 'an event block must end after it starts')
       if (bStart < startMin || bEnd > endMin) {
-        throw new ApiError(
-          400,
-          `an event block falls outside ${className(classId)}'s window`,
-        )
+        throw new ApiError(400, `an event block falls outside ${className(classId)}'s window`)
       }
       return {
         eventId: reqInt(b.eventId, 'block.eventId', 1, MAX_ID),
@@ -145,7 +146,6 @@ function parseSchedule(
       }
     })
 
-    // Blocks within one class never overlap — painting overwrites instead.
     const ordered = [...blocks].sort((a, b) => a.startMin - b.startMin)
     for (let i = 1; i < ordered.length; i++) {
       if (ordered[i]!.startMin < ordered[i - 1]!.endMin) {
@@ -156,8 +156,6 @@ function parseSchedule(
     return { classId, columnIndex, startMin, endMin, blocks }
   })
 
-  // The lane rule: a column is a vertical sequence, so its placements must
-  // not overlap in time.
   const byColumn = new Map<number, ParsedPlacement[]>()
   for (const p of placements) {
     byColumn.set(p.columnIndex, [...(byColumn.get(p.columnIndex) ?? []), p])
@@ -179,43 +177,14 @@ function parseSchedule(
   return placements
 }
 
-/**
- * The window a class runs on in a session: its own clock, else its
- * program's, else the session's. Clamped to the session, because a class
- * that starts before the doors open is not a thing.
- */
-function windowFor(
-  cls: { default_start_time: string | null; default_end_time: string | null; program_id: number | null },
-  program: { default_start_time: string | null; default_end_time: string | null } | undefined,
-  session: { startMin: number; endMin: number },
-): { startMin: number; endMin: number } {
-  const pick = (a: string | null, b: string | null | undefined) => a ?? b ?? null
-  const start = pick(cls.default_start_time, program?.default_start_time)
-  const end = pick(cls.default_end_time, program?.default_end_time)
-  const startMin = start === null ? session.startMin : (parseTime(start) ?? session.startMin)
-  const endMin = end === null ? session.endMin : (parseTime(end) ?? session.endMin)
-  return {
-    startMin: Math.max(startMin, session.startMin),
-    endMin: Math.min(endMin, session.endMin),
+/** Which week the request is about (query ?week=N), defaulting to 1. */
+function weekParam(raw: unknown): number {
+  if (raw === undefined) return 1
+  const week = Number(raw)
+  if (!Number.isInteger(week) || week < 1 || week > PLAN_WEEKS) {
+    throw new ApiError(400, `week must be between 1 and ${PLAN_WEEKS}`)
   }
-}
-
-/**
- * First column whose classes never overlap this window — so classes that
- * follow each other share a lane, and only genuinely simultaneous ones take
- * a column each. Without this a 16-class session would be 16 columns wide.
- */
-function packColumn(
-  taken: { columnIndex: number; startMin: number; endMin: number }[],
-  startMin: number,
-  endMin: number,
-): number {
-  for (let c = 0; ; c++) {
-    const clash = taken.some(
-      (t) => t.columnIndex === c && overlaps(t.startMin, t.endMin, startMin, endMin),
-    )
-    if (!clash) return c
-  }
+  return week
 }
 
 export function scheduleRoutes(db: DatabaseSync): Router {
@@ -236,113 +205,103 @@ export function scheduleRoutes(db: DatabaseSync): Router {
   router.get('/sessions/:id/schedule', (req, res) => {
     const sessionId = idParam(req.params.id)
     sessionOr404(sessionId)
-    res.json({ schedule: loadSchedule(db, sessionId) })
+    res.json({ schedule: loadSchedule(db, sessionId, weekParam(req.query.week)) })
   })
 
   /**
-   * Set which classes attend. This is the step before Generate: it gives
-   * every class a window (its own clock, else its program's, else the
-   * session's) and packs them into lanes. Classes already placed keep the
-   * window and painted work they have — re-gathering must not silently
-   * throw away edits.
+   * Set which classes attend. Every class runs the session's clock, so each
+   * takes its own column, and every attending class gets a placement in all
+   * PLAN_WEEKS weeks (blocks arrive from Generate or by hand). Classes
+   * already attending keep their column and any painted work; dropped ones
+   * lose all their placements.
    */
   router.put('/sessions/:id/classes', (req, res) => {
     const sessionId = idParam(req.params.id)
-    const row = db
-      .prepare('SELECT start_time, end_time FROM sessions WHERE id = ?')
-      .get(sessionId) as { start_time: string; end_time: string } | undefined
-    if (!row) throw new ApiError(404, 'session not found')
-    const session = {
-      startMin: parseTime(row.start_time) ?? 0,
-      endMin: parseTime(row.end_time) ?? 0,
-    }
+    const session = sessionOr404(sessionId)
 
     const obj = asObject(req.body)
     if (!Array.isArray(obj.classIds)) throw new ApiError(400, 'classIds must be an array')
     const wanted = obj.classIds.map((id) => reqInt(id, 'classIds', 1, MAX_ID))
-
-    const classes = db
-      .prepare(
-        `SELECT id, name, program_id, default_start_time, default_end_time FROM groups`,
-      )
-      .all() as {
-      id: number
-      name: string
-      program_id: number | null
-      default_start_time: string | null
-      default_end_time: string | null
-    }[]
-    const byId = new Map(classes.map((c) => [c.id, c]))
-    for (const id of wanted) {
-      if (!byId.has(id)) throw new ApiError(400, `class #${id} no longer exists`)
-    }
-    const programs = new Map(
-      (
-        db.prepare('SELECT id, default_start_time, default_end_time FROM programs').all() as {
-          id: number
-          default_start_time: string | null
-          default_end_time: string | null
-        }[]
-      ).map((p) => [p.id, p]),
+    const names = new Map(
+      (db.prepare('SELECT id, name FROM groups').all() as { id: number; name: string }[]).map(
+        (c) => [c.id, c.name],
+      ),
     )
+    for (const id of wanted) {
+      if (!names.has(id)) throw new ApiError(400, `class #${id} no longer exists`)
+    }
+    if (session.endMin - session.startMin < SLOT_MINUTES) {
+      throw new ApiError(400, 'the session window has no time in it')
+    }
 
     withTransaction(db, () => {
       const existing = db
-        .prepare(
-          'SELECT id, class_id, column_index, start_min, end_min FROM placements WHERE session_id = ?',
-        )
-        .all(sessionId) as {
-        id: number
-        class_id: number
-        column_index: number
-        start_min: number
-        end_min: number
-      }[]
+        .prepare('SELECT DISTINCT class_id, column_index FROM placements WHERE session_id = ?')
+        .all(sessionId) as { class_id: number; column_index: number }[]
       const keep = new Set(wanted)
-      for (const p of existing) {
-        if (!keep.has(p.class_id)) {
-          db.prepare('DELETE FROM placements WHERE id = ?').run(p.id)
-        }
-      }
-
-      const taken = existing
-        .filter((p) => keep.has(p.class_id))
-        .map((p) => ({ columnIndex: p.column_index, startMin: p.start_min, endMin: p.end_min }))
-      const already = new Set(taken.length ? existing.filter((p) => keep.has(p.class_id)).map((p) => p.class_id) : [])
-      const insert = db.prepare(
-        'INSERT INTO placements (session_id, class_id, column_index, start_min, end_min) VALUES (?, ?, ?, ?, ?)',
-      )
-      for (const classId of wanted) {
-        if (already.has(classId)) continue
-        const cls = byId.get(classId)!
-        const w = windowFor(
-          cls,
-          cls.program_id === null ? undefined : programs.get(cls.program_id),
-          session,
-        )
-        if (w.endMin - w.startMin < SLOT_MINUTES) {
-          throw new ApiError(
-            400,
-            `${cls.name}'s window falls outside this session — check its program's default times`,
+      for (const row of existing) {
+        if (!keep.has(row.class_id)) {
+          db.prepare('DELETE FROM placements WHERE session_id = ? AND class_id = ?').run(
+            sessionId,
+            row.class_id,
           )
         }
-        const columnIndex = packColumn(taken, w.startMin, w.endMin)
-        insert.run(sessionId, classId, columnIndex, w.startMin, w.endMin)
-        taken.push({ columnIndex, startMin: w.startMin, endMin: w.endMin })
+      }
+      const columnOf = new Map(existing.filter((r) => keep.has(r.class_id)).map((r) => [r.class_id, r.column_index]))
+      const usedColumns = new Set(columnOf.values())
+      const insert = db.prepare(
+        'INSERT INTO placements (session_id, class_id, column_index, week, start_min, end_min) VALUES (?, ?, ?, ?, ?, ?)',
+      )
+      const haveWeeks = new Map<number, Set<number>>()
+      for (const p of db
+        .prepare('SELECT class_id, week FROM placements WHERE session_id = ?')
+        .all(sessionId) as { class_id: number; week: number }[]) {
+        haveWeeks.set(p.class_id, (haveWeeks.get(p.class_id) ?? new Set()).add(p.week))
       }
 
-      const columnCount = taken.reduce((max, t) => Math.max(max, t.columnIndex + 1), 0)
+      let nextColumn = 0
+      const takeColumn = () => {
+        while (usedColumns.has(nextColumn)) nextColumn++
+        usedColumns.add(nextColumn)
+        return nextColumn
+      }
+      for (const classId of wanted) {
+        const column = columnOf.get(classId) ?? takeColumn()
+        const have = haveWeeks.get(classId) ?? new Set<number>()
+        for (let week = 1; week <= PLAN_WEEKS; week++) {
+          if (!have.has(week)) {
+            insert.run(sessionId, classId, column, week, session.startMin, session.endMin)
+          }
+        }
+      }
+
+      const columnCount = wanted.length === 0 ? 0 : Math.max(...[...usedColumns]) + 1
       db.prepare('UPDATE sessions SET column_count = ? WHERE id = ?').run(columnCount, sessionId)
     })
 
-    res.json({ schedule: loadSchedule(db, sessionId) })
+    res.json({ schedule: loadSchedule(db, sessionId, 1) })
   })
 
-  // Full replace: the grid always saves its complete state for the session,
-  // the same contract the old per-cell grid used.
+  /** Which weeks are locked against re-generation (a boolean per week). */
+  router.put('/sessions/:id/week-locks', (req, res) => {
+    const sessionId = idParam(req.params.id)
+    if (!db.prepare('SELECT id FROM sessions WHERE id = ?').get(sessionId)) {
+      throw new ApiError(404, 'session not found')
+    }
+    const obj = asObject(req.body)
+    if (!Array.isArray(obj.weekLocks) || obj.weekLocks.length !== PLAN_WEEKS) {
+      throw new ApiError(400, `weekLocks must be ${PLAN_WEEKS} booleans`)
+    }
+    const locks = obj.weekLocks.map((v) => reqBool(v, 'weekLocks'))
+    db.prepare('UPDATE sessions SET week_locks = ? WHERE id = ?').run(JSON.stringify(locks), sessionId)
+    res.json({ weekLocks: locks })
+  })
+
+  // Full replace of one week: the grid saves its complete state for that week.
   router.put('/sessions/:id/schedule', (req, res) => {
     const sessionId = idParam(req.params.id)
     const session = sessionOr404(sessionId)
+    const week = weekParam(req.query.week)
     const names = new Map(
       (db.prepare('SELECT id, name FROM groups').all() as { id: number; name: string }[]).map(
         (c) => [c.id, c.name],
@@ -353,17 +312,17 @@ export function scheduleRoutes(db: DatabaseSync): Router {
 
     try {
       withTransaction(db, () => {
-        // Blocks cascade with their placement.
-        db.prepare('DELETE FROM placements WHERE session_id = ?').run(sessionId)
+        // Only this week's placements are replaced; the other weeks stand.
+        db.prepare('DELETE FROM placements WHERE session_id = ? AND week = ?').run(sessionId, week)
         const insertPlacement = db.prepare(
-          'INSERT INTO placements (session_id, class_id, column_index, start_min, end_min) VALUES (?, ?, ?, ?, ?)',
+          'INSERT INTO placements (session_id, class_id, column_index, week, start_min, end_min) VALUES (?, ?, ?, ?, ?, ?)',
         )
         const insertBlock = db.prepare(
           'INSERT INTO event_blocks (placement_id, event_id, coach_id, start_min, end_min, locked) VALUES (?, ?, ?, ?, ?, ?)',
         )
         for (const p of placements) {
           const placementId = Number(
-            insertPlacement.run(sessionId, p.classId, p.columnIndex, p.startMin, p.endMin)
+            insertPlacement.run(sessionId, p.classId, p.columnIndex, week, p.startMin, p.endMin)
               .lastInsertRowid,
           )
           for (const b of p.blocks) {
@@ -377,7 +336,7 @@ export function scheduleRoutes(db: DatabaseSync): Router {
       }
       throw err
     }
-    res.json({ schedule: loadSchedule(db, sessionId) })
+    res.json({ schedule: loadSchedule(db, sessionId, week) })
   })
 
   return router

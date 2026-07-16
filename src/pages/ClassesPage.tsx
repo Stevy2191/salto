@@ -1,16 +1,7 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
-import type {
-  ClassWindow,
-  Coach,
-  EventPosition,
-  GymClass,
-  GymEvent,
-  Program,
-  RequiredEvent,
-} from '../../shared/types.ts'
-import { EVENT_POSITIONS } from '../../shared/types.ts'
-import { SLOT_MINUTES, formatRange, parseTime } from '../../shared/slots.ts'
+import type { Coach, GymClass, GymEvent, Program } from '../../shared/types.ts'
+import { SLOT_MINUTES } from '../../shared/slots.ts'
 import { apiDelete, apiGet, apiPost, apiPut } from '../lib/api.ts'
 import { useLoad } from '../lib/useLoad.ts'
 import {
@@ -30,221 +21,141 @@ export interface ClassFormValues {
   name: string
   programId: number | null
   priority: number
-  requiredEvents: RequiredEvent[]
-  defaultStartTime: string
-  defaultEndTime: string
+  /** The subset of events this class may be scheduled onto. */
+  eligibleEventIds: number[]
+  /** Whole period length in minutes; a multiple of SLOT_MINUTES. */
+  periodMinutes: number
+  /** Optional fixed opening block. Null event id means no warm-up. */
+  warmupEventId: number | null
+  warmupMinutes: number
+  /** Optional fixed closing block. Null event id means no cool-down. */
+  cooldownEventId: number | null
+  cooldownMinutes: number
   assignedCoaches: number[]
 }
 
-const POSITION_LABELS: Record<EventPosition, string> = {
-  FIRST: 'First',
-  ANY: 'Anywhere',
-  LAST: 'Last',
-}
-
-/** Editor draft: durations stay strings so typing is never fought. */
-interface RequiredEventDraft {
-  eventId: number
-  duration: string
-  position: EventPosition
-}
-
-const toDrafts = (entries: RequiredEvent[]): RequiredEventDraft[] =>
-  entries.map((r) => ({ eventId: r.eventId, duration: String(r.duration), position: r.position }))
-
-function RequiredEventsEditor({
-  value,
+/** An optional warm-up/cool-down anchor: pick an event and a length, or none. */
+function AnchorEditor({
+  label,
   events,
+  eventId,
+  minutes,
   onChange,
 }: {
-  value: RequiredEventDraft[]
+  label: string
   events: GymEvent[]
-  onChange: (entries: RequiredEventDraft[]) => void
+  eventId: number | ''
+  minutes: string
+  onChange: (patch: { eventId?: number | ''; minutes?: string }) => void
 }) {
-  const available = events.filter((e) => !value.some((r) => r.eventId === e.id))
-
   return (
-    <div className="space-y-2">
-      {value.map((entry, index) => {
-        const replace = (patch: Partial<RequiredEventDraft>) => {
-          const next = [...value]
-          next[index] = { ...entry, ...patch }
-          onChange(next)
-        }
-        return (
-          <div key={entry.eventId} className="flex flex-wrap items-center gap-2">
-            <Select
-              className="max-w-48"
-              value={entry.eventId}
-              onChange={(e) => replace({ eventId: Number(e.target.value) })}
-              aria-label="event"
-            >
-              {[events.find((ev) => ev.id === entry.eventId), ...available]
-                .filter((ev): ev is GymEvent => ev !== undefined)
-                .map((ev) => (
-                  <option key={ev.id} value={ev.id}>
-                    {ev.name}
-                  </option>
-                ))}
-            </Select>
-            <TextInput
-              type="number"
-              className="max-w-20"
-              min={5}
-              step={5}
-              value={entry.duration}
-              onChange={(e) => replace({ duration: e.target.value })}
-              aria-label="duration in minutes"
-            />
-            <span className="text-sm text-slate-500 dark:text-slate-400">min</span>
-            <Select
-              className="max-w-32"
-              value={entry.position}
-              onChange={(e) => replace({ position: e.target.value as EventPosition })}
-              aria-label="position"
-            >
-              {EVENT_POSITIONS.map((p) => (
-                <option key={p} value={p}>
-                  {POSITION_LABELS[p]}
-                </option>
-              ))}
-            </Select>
-            <Button
-              type="button"
-              variant="danger"
-              onClick={() => onChange(value.filter((_, i) => i !== index))}
-            >
-              Remove
-            </Button>
-          </div>
-        )
-      })}
-      {available.length > 0 && (
-        <Button
-          type="button"
-          variant="secondary"
-          onClick={() =>
-            onChange([...value, { eventId: available[0]!.id, duration: '30', position: 'ANY' }])
-          }
+    <div className="grid gap-2 sm:grid-cols-[1fr_8rem] sm:items-end">
+      <Field label={`${label} event`}>
+        <Select
+          value={eventId}
+          onChange={(e) => onChange({ eventId: e.target.value === '' ? '' : Number(e.target.value) })}
+          aria-label={`${label} event`}
         >
-          + Add event
-        </Button>
-      )}
-      {events.length === 0 && (
-        <p className="text-sm text-slate-400 dark:text-slate-500">
-          Create events first, then set what this class does.
-        </p>
-      )}
-      {value.length > 0 && (
-        <p className="text-xs text-slate-500 dark:text-slate-400">
-          "First" is a warm-up, "Last" a cool-down — they fix the order, not the clock, so a class
-          still waits its turn for a busy apparatus.
-        </p>
-      )}
+          <option value="">None</option>
+          {events.map((ev) => (
+            <option key={ev.id} value={ev.id}>
+              {ev.name}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      <Field label={`${label} minutes`}>
+        <TextInput
+          type="number"
+          min={0}
+          step={SLOT_MINUTES}
+          value={minutes}
+          onChange={(e) => onChange({ minutes: e.target.value })}
+          disabled={eventId === ''}
+          aria-label={`${label} minutes`}
+        />
+      </Field>
     </div>
   )
 }
 
 /**
- * Live feedback while editing: total time asked for against the window the
- * class will actually run on. This is the last chance to see that a class
- * cannot fit before hitting Generate, so it has to be honest about which
- * window it is measuring against.
+ * Live feedback while editing: how much of the period is left for eligible
+ * events after the warm-up and cool-down, and roughly how many of them fit
+ * one period. A class does not visit every eligible event each week — the
+ * plan spreads them across four — so this shows the per-period budget, not a
+ * total the whole list has to fit inside.
  */
 function FitSummary({
-  drafts,
-  windows,
-  classId,
-  ownWindow,
-  programWindow,
+  events,
+  eligibleEventIds,
+  periodMinutes,
+  warmupMinutes,
+  cooldownMinutes,
 }: {
-  drafts: RequiredEventDraft[]
-  windows: ClassWindow[]
-  classId: number | null
-  ownWindow: { start: string; end: string }
-  programWindow: { start: string | null; end: string | null } | null
+  events: GymEvent[]
+  eligibleEventIds: number[]
+  periodMinutes: number
+  warmupMinutes: number
+  cooldownMinutes: number
 }) {
-  if (drafts.length === 0) return null
-  const total = drafts.reduce((sum, d) => sum + (Number(d.duration) || 0), 0)
-  const offAxis = drafts.filter(
-    (d) => Number(d.duration) > 0 && Number(d.duration) % SLOT_MINUTES !== 0,
-  )
+  const middle = periodMinutes - warmupMinutes - cooldownMinutes
+  const durations = eligibleEventIds
+    .map((id) => events.find((e) => e.id === id)?.duration ?? 0)
+    .filter((d) => d > 0)
+    .sort((a, b) => a - b)
 
-  // The clock this class will run on: its own, else its program's.
-  const start = ownWindow.start || programWindow?.start || null
-  const end = ownWindow.end || programWindow?.end || null
-  const source = ownWindow.start ? 'its own times' : programWindow?.start ? "its program's times" : null
-  const defaultMinutes =
-    start && end ? (parseTime(end) ?? 0) - (parseTime(start) ?? 0) : null
+  // How many of the eligible events fit the middle time, shortest first — the
+  // most a period could hold.
+  let used = 0
+  let fit = 0
+  for (const d of durations) {
+    if (used + d > middle) break
+    used += d
+    fit++
+  }
+  const overflows = durations.length > 0 && durations[0]! > middle
 
   return (
     <div className="mt-2 space-y-1 rounded-lg bg-slate-50 p-2 text-sm dark:bg-slate-700">
-      <p className="font-medium text-slate-700 dark:text-slate-200">Total required: {total} min</p>
-      {offAxis.length > 0 && (
+      <p className="font-medium text-slate-700 dark:text-slate-200">
+        Middle time: {middle} min ({periodMinutes} − {warmupMinutes} warm-up − {cooldownMinutes}{' '}
+        cool-down)
+      </p>
+      {middle <= 0 ? (
         <p className="font-medium text-red-600 dark:text-red-400">
-          ⚠ {offAxis.map((d) => `${d.duration} min`).join(', ')} — durations must be a multiple of{' '}
-          {SLOT_MINUTES} minutes
+          ⚠ The warm-up and cool-down leave no time for events.
         </p>
-      )}
-      {defaultMinutes !== null && (
-        <p
-          className={
-            defaultMinutes < total
-              ? 'font-medium text-red-600 dark:text-red-400'
-              : 'text-emerald-700 dark:text-emerald-300'
-          }
-        >
-          Window {start}–{end} ({source}, {defaultMinutes} min):{' '}
-          {defaultMinutes < total
-            ? `⚠ over by ${total - defaultMinutes} min`
-            : `fits with ${defaultMinutes - total} min spare`}
-        </p>
-      )}
-      {defaultMinutes === null && (
+      ) : eligibleEventIds.length === 0 ? (
         <p className="text-slate-500 dark:text-slate-400">
-          No window set here or on its program — it will run the whole session.
+          Choose the events this class may rotate through.
+        </p>
+      ) : overflows ? (
+        <p className="font-medium text-red-600 dark:text-red-400">
+          ⚠ The shortest eligible event is longer than the middle time — none fit.
+        </p>
+      ) : (
+        <p className="text-emerald-700 dark:text-emerald-300">
+          Up to {fit} of {eligibleEventIds.length} eligible event{eligibleEventIds.length === 1 ? '' : 's'}{' '}
+          fit each period.
         </p>
       )}
-      {classId !== null &&
-        windows.map((w) => {
-          const available = w.endMin - w.startMin
-          const spare = available - total
-          return (
-            <p
-              key={`${w.sessionId}:${w.startMin}`}
-              className={
-                spare < 0
-                  ? 'font-medium text-red-600 dark:text-red-400'
-                  : 'text-emerald-700 dark:text-emerald-300'
-              }
-            >
-              {w.sessionName || w.date} {formatRange(w.startMin, w.endMin)} ({available} min):{' '}
-              {spare < 0 ? `⚠ over by ${-spare} min` : `fits with ${spare} min spare`}
-            </p>
-          )
-        })}
     </div>
   )
 }
 
 export function ClassForm({
   initial,
-  classId = null,
   events,
   coaches,
   programs,
-  windows = [],
   onSave,
   onCancel,
 }: {
   initial: ClassFormValues
-  /** Id of the class being edited, for checking fit against its sessions. */
-  classId?: number | null
   events: GymEvent[]
   coaches: Coach[]
   programs: Program[]
-  /** Where this class is already placed, for the fit summary. */
-  windows?: ClassWindow[]
   onSave: (values: ClassFormValues) => Promise<void>
   onCancel?: () => void
 }) {
@@ -253,46 +164,51 @@ export function ClassForm({
   // so freezing programs[0] here would leave the select permanently unset.
   const [programId, setProgramId] = useState<number | ''>(initial.programId ?? '')
   const [priority, setPriority] = useState(String(initial.priority))
-  const [requiredEvents, setRequiredEvents] = useState(toDrafts(initial.requiredEvents))
-  const [start, setStart] = useState(initial.defaultStartTime)
-  const [end, setEnd] = useState(initial.defaultEndTime)
+  const [eligibleEventIds, setEligibleEventIds] = useState(initial.eligibleEventIds)
+  const [periodMinutes, setPeriodMinutes] = useState(String(initial.periodMinutes))
+  const [warmupEventId, setWarmupEventId] = useState<number | ''>(initial.warmupEventId ?? '')
+  const [warmupMinutes, setWarmupMinutes] = useState(String(initial.warmupMinutes))
+  const [cooldownEventId, setCooldownEventId] = useState<number | ''>(initial.cooldownEventId ?? '')
+  const [cooldownMinutes, setCooldownMinutes] = useState(String(initial.cooldownMinutes))
   const [assignedCoaches, setAssignedCoaches] = useState(initial.assignedCoaches)
   const [error, setError] = useState<string | null>(null)
 
   const chosenProgramId: number | '' = programId === '' ? (programs[0]?.id ?? '') : programId
-  const program = programs.find((p) => p.id === chosenProgramId) ?? null
 
   async function submit(e: FormEvent) {
     e.preventDefault()
-    if ((start === '') !== (end === '')) {
-      setError('Give both a start and end time, or neither.')
+    const period = Number(periodMinutes)
+    if (!Number.isInteger(period) || period < SLOT_MINUTES || period % SLOT_MINUTES !== 0) {
+      setError(`Give a period length in minutes (a multiple of ${SLOT_MINUTES}).`)
       return
     }
-    const parsed: RequiredEvent[] = []
-    for (const draft of requiredEvents) {
-      const duration = Number(draft.duration)
-      const eventName = events.find((ev) => ev.id === draft.eventId)?.name ?? 'an event'
-      if (!Number.isInteger(duration) || duration < 5 || duration % 5 !== 0) {
-        setError(`Give ${eventName} a duration in minutes (a multiple of 5).`)
-        return
-      }
-      parsed.push({ eventId: draft.eventId, duration, position: draft.position })
+    const warm = warmupEventId === '' ? 0 : Number(warmupMinutes)
+    const cool = cooldownEventId === '' ? 0 : Number(cooldownMinutes)
+    if (warm + cool > period) {
+      setError("The warm-up and cool-down don't leave any time in the period.")
+      return
     }
     try {
       await onSave({
         name,
         programId: chosenProgramId === '' ? null : chosenProgramId,
         priority: Number(priority),
-        requiredEvents: parsed,
-        defaultStartTime: start,
-        defaultEndTime: end,
+        eligibleEventIds,
+        periodMinutes: period,
+        warmupEventId: warmupEventId === '' ? null : warmupEventId,
+        warmupMinutes: warm,
+        cooldownEventId: cooldownEventId === '' ? null : cooldownEventId,
+        cooldownMinutes: cool,
         assignedCoaches,
       })
       setName(initial.name)
       setPriority(String(initial.priority))
-      setRequiredEvents(toDrafts(initial.requiredEvents))
-      setStart(initial.defaultStartTime)
-      setEnd(initial.defaultEndTime)
+      setEligibleEventIds(initial.eligibleEventIds)
+      setPeriodMinutes(String(initial.periodMinutes))
+      setWarmupEventId(initial.warmupEventId ?? '')
+      setWarmupMinutes(String(initial.warmupMinutes))
+      setCooldownEventId(initial.cooldownEventId ?? '')
+      setCooldownMinutes(String(initial.cooldownMinutes))
       setAssignedCoaches(initial.assignedCoaches)
       setError(null)
     } catch (err) {
@@ -303,7 +219,7 @@ export function ClassForm({
   return (
     <form onSubmit={submit} className="space-y-3">
       <ErrorNote message={error} />
-      <div className="grid gap-3 sm:grid-cols-[1fr_10rem_7rem]">
+      <div className="grid gap-3 sm:grid-cols-[1fr_10rem_7rem_7rem]">
         <Field label="Class name">
           <TextInput
             value={name}
@@ -326,6 +242,16 @@ export function ClassForm({
             ))}
           </Select>
         </Field>
+        <Field label="Period (min)">
+          <TextInput
+            type="number"
+            min={SLOT_MINUTES}
+            step={SLOT_MINUTES}
+            value={periodMinutes}
+            onChange={(e) => setPeriodMinutes(e.target.value)}
+            required
+          />
+        </Field>
         <Field label="Priority">
           <TextInput
             type="number"
@@ -337,41 +263,48 @@ export function ClassForm({
           />
         </Field>
       </div>
-      <div className="grid gap-3 sm:grid-cols-[10rem_10rem_1fr] sm:items-end">
-        <Field label="Starts (optional)">
-          <TextInput
-            type="time"
-            step={300}
-            value={start}
-            onChange={(e) => setStart(e.target.value)}
-            aria-label="class start time"
+      <FieldGroup label="Warm-up and cool-down (optional anchors)">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <AnchorEditor
+            label="Warm-up"
+            events={events}
+            eventId={warmupEventId}
+            minutes={warmupMinutes}
+            onChange={(patch) => {
+              if (patch.eventId !== undefined) setWarmupEventId(patch.eventId)
+              if (patch.minutes !== undefined) setWarmupMinutes(patch.minutes)
+            }}
           />
-        </Field>
-        <Field label="Ends (optional)">
-          <TextInput
-            type="time"
-            step={300}
-            value={end}
-            onChange={(e) => setEnd(e.target.value)}
-            aria-label="class end time"
+          <AnchorEditor
+            label="Cool-down"
+            events={events}
+            eventId={cooldownEventId}
+            minutes={cooldownMinutes}
+            onChange={(patch) => {
+              if (patch.eventId !== undefined) setCooldownEventId(patch.eventId)
+              if (patch.minutes !== undefined) setCooldownMinutes(patch.minutes)
+            }}
           />
-        </Field>
-        <p className="pb-2 text-xs text-slate-500 dark:text-slate-400">
-          {program?.defaultStartTime
-            ? `Blank uses ${program.name}'s ${program.defaultStartTime}–${program.defaultEndTime}.`
-            : 'Blank uses the whole session window.'}
-        </p>
-      </div>
-      <FieldGroup label="What this class does, and for how long">
-        <RequiredEventsEditor value={requiredEvents} events={events} onChange={setRequiredEvents} />
+        </div>
+      </FieldGroup>
+      <FieldGroup label="Eligible events">
+        {events.length === 0 ? (
+          <p className="text-sm text-slate-400 dark:text-slate-500">
+            Create events first, then choose which ones this class may rotate through.
+          </p>
+        ) : (
+          <ChipPicker
+            options={events.map((e) => ({ id: e.id, label: `${e.name} · ${e.duration}′` }))}
+            selected={eligibleEventIds}
+            onChange={setEligibleEventIds}
+          />
+        )}
         <FitSummary
-          drafts={requiredEvents}
-          windows={windows}
-          classId={classId}
-          ownWindow={{ start, end }}
-          programWindow={
-            program ? { start: program.defaultStartTime, end: program.defaultEndTime } : null
-          }
+          events={events}
+          eligibleEventIds={eligibleEventIds}
+          periodMinutes={Number(periodMinutes) || 0}
+          warmupMinutes={warmupEventId === '' ? 0 : Number(warmupMinutes) || 0}
+          cooldownMinutes={cooldownEventId === '' ? 0 : Number(cooldownMinutes) || 0}
         />
       </FieldGroup>
       <FieldGroup label="Assigned coaches">
@@ -399,7 +332,6 @@ export function ClassesPage() {
   const coachesLoad = useLoad(() => apiGet<{ coaches: Coach[] }>('/api/coaches'))
   const programsLoad = useLoad(() => apiGet<{ programs: Program[] }>('/api/programs'))
   const [editingId, setEditingId] = useState<number | null>(null)
-  const [windows, setWindows] = useState<ClassWindow[]>([])
   const [actionError, setActionError] = useState<string | null>(null)
 
   const classes = classesLoad.data?.classes ?? []
@@ -419,50 +351,38 @@ export function ClassesPage() {
   }
 
   function describe(cls: GymClass): string {
-    const total = cls.requiredEvents.reduce((sum, r) => sum + r.duration, 0)
-    const names = cls.requiredEvents
-      .map((r) => {
-        const name = events.find((e) => e.id === r.eventId)?.name
-        if (!name) return undefined
-        const mark = r.position === 'FIRST' ? ' (first)' : r.position === 'LAST' ? ' (last)' : ''
-        return `${name} ${r.duration}′${mark}`
-      })
+    const nameOf = (id: number | null) => (id === null ? null : events.find((e) => e.id === id)?.name)
+    const eligible = cls.eligibleEventIds
+      .map((id) => events.find((e) => e.id === id)?.name)
       .filter(Boolean)
+    const warmup = nameOf(cls.warmupEventId)
+    const cooldown = nameOf(cls.cooldownEventId)
     const coachNames = cls.assignedCoaches
       .map((id) => coaches.find((c) => c.id === id)?.name)
       .filter(Boolean)
     return [
-      names.length > 0 ? `${names.join(', ')} (${total} min total)` : 'no events set',
-      cls.defaultStartTime ? `${cls.defaultStartTime}–${cls.defaultEndTime}` : null,
+      `${cls.periodMinutes} min period`,
+      warmup ? `warm-up ${warmup} ${cls.warmupMinutes}′` : null,
+      cooldown ? `cool-down ${cooldown} ${cls.cooldownMinutes}′` : null,
+      eligible.length > 0 ? `eligible: ${eligible.join(', ')}` : 'no eligible events',
       coachNames.length > 0 ? `coached by ${coachNames.join(', ')}` : null,
     ]
       .filter(Boolean)
       .join(' · ')
   }
 
-  const startEditing = (cls: GymClass) => {
-    setEditingId(cls.id)
-    setWindows([])
-    void apiGet<{ windows: ClassWindow[] }>(`/api/classes/${cls.id}/windows`)
-      .then((r) => setWindows(r.windows))
-      .catch(() => setWindows([]))
-  }
-
   const emptyForm: ClassFormValues = {
     name: '',
     programId: null,
     priority: 0,
-    requiredEvents: [],
-    defaultStartTime: '',
-    defaultEndTime: '',
+    eligibleEventIds: [],
+    periodMinutes: 45,
+    warmupEventId: null,
+    warmupMinutes: 0,
+    cooldownEventId: null,
+    cooldownMinutes: 0,
     assignedCoaches: [],
   }
-
-  const save = (values: ClassFormValues) => ({
-    ...values,
-    defaultStartTime: values.defaultStartTime || null,
-    defaultEndTime: values.defaultEndTime || null,
-  })
 
   // Grouped by program, with anything unassigned last — a class with no
   // program cannot be generated from, so it should be visible, not hidden.
@@ -507,7 +427,7 @@ export function ClassesPage() {
           coaches={coaches}
           programs={programs}
           onSave={async (values) => {
-            await apiPost('/api/classes', save(values))
+            await apiPost('/api/classes', values)
             await classesLoad.reload()
           }}
         />
@@ -536,19 +456,13 @@ export function ClassesPage() {
               editingId === cls.id ? (
                 <li key={cls.id} className="py-3">
                   <ClassForm
-                    initial={{
-                      ...cls,
-                      defaultStartTime: cls.defaultStartTime ?? '',
-                      defaultEndTime: cls.defaultEndTime ?? '',
-                    }}
-                    classId={cls.id}
+                    initial={cls}
                     events={events}
                     coaches={coaches}
                     programs={programs}
-                    windows={windows}
                     onCancel={() => setEditingId(null)}
                     onSave={async (values) => {
-                      await apiPut(`/api/classes/${cls.id}`, save(values))
+                      await apiPut(`/api/classes/${cls.id}`, values)
                       setEditingId(null)
                       await classesLoad.reload()
                     }}
@@ -570,7 +484,7 @@ export function ClassesPage() {
                     )}
                     <p className="text-sm text-slate-500 dark:text-slate-400">{describe(cls)}</p>
                   </div>
-                  <Button variant="secondary" onClick={() => startEditing(cls)}>
+                  <Button variant="secondary" onClick={() => setEditingId(cls.id)}>
                     Edit
                   </Button>
                   <Button variant="danger" onClick={() => void remove(cls)}>

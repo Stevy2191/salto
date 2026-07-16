@@ -35,17 +35,17 @@ No parent/athlete-facing features in v1. Single admin login per instance
 ## Core Entities (data model)
 
 ### Event (station)
-Fully user-defined — the examples below are illustrative, never a fixed list.
-- `name` (e.g., Vault, Uneven Bars, Beam, Floor, Tumble Track, Pit, Conditioning)
-- `capacity` — optional limit on how many classes can use it simultaneously
-  (apparatus usually 1; floor might fit 2). Unset means no limit — think
-  open stretching areas or conditioning.
-
-Events are **facility-wide shared resources**, not owned by a program.
-Classes from different programs routinely require the same one — Preschool's
-Tiny Tot 1 and Rec Gym's Rec Gym 1 both want the Tumble Trak — and two
-classes must never be on it at once. That contention is the core constraint
-the generator exists to solve.
+The facility enters **every** event used anywhere in the building, once.
+Fully user-defined — the examples are illustrative, never a fixed list.
+- `name` (e.g., PS Vault, Uneven Bars, Beam, Floor, Tumble Trak, Stretch)
+- `duration` — **how long a class spends there per visit**, set when the
+  event is created (PS Vault = 10 min). This is per event, facility-wide,
+  not per class: the event's rotation length is a property of the station.
+- `shared` — **the collision rule.** Events default to **exclusive**: only
+  one class may be on an exclusive event at any given moment. A **shared**
+  event (tag it) may hold any number of classes at once — for warm-up
+  stretching, cool-down conditioning, open-floor work. Shared events are
+  exempt from the no-collision rule; exclusive ones are not.
 - `active` — can be marked unavailable (equipment down)
 - `color` — hex color shown everywhere the event appears (grid, Excel
   export, print view). Users pick from a curated palette of distinct,
@@ -74,29 +74,31 @@ storage keeps the original `groups` table name behind the server's mappers.
 - `programId` — the program it belongs to
 - `level` / priority — higher-priority classes get first pick when conflicts
   arise (e.g., optionals over recreational)
-- `requiredEvents` — **the class's structure, and the main input to
-  generation.** A list of (event, **duration**, **position**):
-  - `duration` is per class per event, never global: Tiny Tot 1 might do
-    15 min at each event while Rec Gym 1 does 10.
-  - `position` anchors the event in the class's order:
-    - `FIRST` — the class starts with it (a warm-up)
-    - `LAST` — the class ends with it (a cool-down)
-    - `ANY` — free to fall anywhere in between
-    Several `FIRST` events simply all come before everything else, in
-    whatever order fits; likewise several `LAST` all come after. **A
-    position anchors the order, not the clock**: a warm-up is the first
-    thing the class does, not something pinned to the minute its window
-    opens. Pinning would make perfectly good schedules impossible the
-    moment two classes wanted the same warm-up apparatus — which is exactly
-    what a shared Tumble Trak causes.
-  While editing, the form shows the running total required time against the
-  class's window, so a class that cannot fit is visible before generating.
-- `defaultStartTime` / `defaultEndTime` — optional, overriding the
-  program's. A class's window in a session defaults to its own times, else
-  its program's, else the session's — so classes can run on different clocks
-  and be staggered.
-- `assignedCoaches` — coaches who travel with this class (some gyms rotate
-  coaches by event instead; support both via a setting)
+- `eligibleEvents` — **the subset of facility events this class may use.**
+  A class does *not* visit all of them in one period; it draws from this
+  list. (LWM: PS Bars, PS Vault, Tumble Trak, PS Floor, Rec Beams.)
+- `periodMinutes` — the class's total period length (e.g. 45 min).
+- `warmupEvent` / `warmupMinutes` — an optional fixed **opening** block: a
+  stretch that leads every period, a length set per class. Usually a shared
+  event.
+- `cooldownEvent` / `cooldownMinutes` — an optional fixed **closing** block:
+  conditioning/cool-down, a length set per class. Usually a shared event.
+
+**The number of events per period is derived, not entered.** Period length
+minus the warm-up and cool-down blocks leaves the *middle time*; how many
+eligible events fit is that middle time divided by the events' own durations
+(each event carries its duration). A 45-min period with a 5-min warm-up and
+5-min cool-down leaves 35 min; four 10-min eligible events do not all fit, so
+the class draws three of them that week. While editing, the form shows the
+middle time and how many events it holds, so a class that cannot fit is
+visible before generating.
+- `programId` gives the class its program; `priority` breaks contention;
+  `assignedCoaches` are coaches who travel with it (some gyms rotate coaches
+  by event instead; support both via a setting).
+
+**Within a week all classes run on the same clock** — they start and end
+together at the session's times. That is *why* the no-collision rule bites:
+at any moment two classes must not be on the same exclusive event.
 
 ### Session (practice block)
 - `date` — the **specific calendar day** this practice happens (e.g.
@@ -205,63 +207,74 @@ moving and resizing are what a generated schedule needs most.
 
 It must be fluid: minimal clicks, no keyboard needed, mouse or touch.
 
-### Generation — the primary path
+### Generation — a 4-week plan, the primary deliverable
 A session **gathers the classes attending** (pick a whole program, or pick
-classes individually). Each lands on its own window — its own default times,
-else its program's, else the session's — packed into columns so classes that
-never overlap share a lane.
+classes individually) onto one shared clock. "Generate" then produces **four
+weeks of rotations at once** — same classes, same clock every week, a
+*different* selection of events each week. This, not a single day's
+schedule, is the thing gyms actually want out of Salto.
 
-"Generate" then produces a **complete rotation in one shot**: every class
-visits all of its required events for their full per-class durations, inside
-its own window, honouring FIRST/LAST anchors, and **no two classes are ever
-on the same event at once** (capacity permitting). "Shuffle" re-rolls the
-seed for a different valid layout. Manual and generated blocks coexist, and
-locked blocks are planned around.
+Each week, each class draws a subset of its eligible events that fills its
+period (after the warm-up and cool-down), in a randomized order — varied
+rotations are the whole point. Across the four weeks:
 
-**Hard constraints (never violated):**
-1. An event's simultaneous classes never exceed its capacity (events
-   without a limit are unconstrained). **This is the core one** — events are
-   shared across programs and contended.
-2. A class is in exactly one place at a time. (Structural: blocks live
-   inside a placement and never overlap within it.)
+- **Coverage floor: every eligible event is attended at least 2 times**
+  (target 2–3, spread as evenly as the math allows). Two is a hard floor;
+  events left unused early are prioritized in later weeks to reach it.
+- **Warm-up leads and cool-down closes** every class's period, where defined.
+- **Exclusive events are never double-booked** within a week: at any moment,
+  no two classes are on the same exclusive event. **Shared events may overlap
+  freely** — that is what the shared tag buys.
+
+**Best-effort, never silent.** If the constraints can't all be met — a
+contested exclusive event simply can't give every class its two visits in the
+time available — Salto still produces the best plan it can and **flags the
+gaps in plain language**: *"Rec Beams: Rec Gym 1 only gets 1 of 2 required
+visits — not enough non-conflicting slots across the 4 weeks."* It never
+hands back an incomplete plan without saying so.
+
+**Re-randomize with locks.** "Re-randomize" rolls a fresh 4-week plan. Any
+week the user has **locked** stays exactly as it is; the other weeks reflow
+around it. Deterministic given a seed, so the same seed and locks reproduce
+the same plan.
+
+**Hard constraints (never violated in a week):**
+1. **No two classes on the same exclusive event at once.** This is the core
+   constraint — events are shared facility-wide and contended. Shared-tagged
+   events are exempt.
+2. A class is in exactly one place at a time.
 3. A coach is in exactly one place at a time.
-4. Each class completes its required events with their full durations
-   **inside that class's own window** — not the session window.
+4. Warm-up leads and cool-down closes the class's period.
 5. Inactive events are never scheduled.
-6. Blocks never fall outside their class's window.
-7. Position anchors hold: every `FIRST` event comes before every `ANY` and
-   `LAST` one, and every `LAST` after every `FIRST` and `ANY`.
+6. A locked week is returned byte-for-byte unchanged.
 
-**Soft constraints (optimize, in priority order):**
-1. Higher-priority classes get their preferred/required layout first.
-2. Minimize idle time within each class's window.
-3. Avoid back-to-back high-intensity events for the same class (e.g., don't
-   put conditioning immediately before beam) — make this a configurable
-   adjacency-penalty list.
-4. Coaches stay with their assigned class (or event, depending on gym mode).
+**Coverage constraint (best-effort, flagged when unmet):**
+- Every eligible event of every class is attended ≥ 2 times across the four
+  weeks, distributed 2–3 as evenly as possible.
 
 **Suggested approach:**
-- Discretize each class's window into 5-minute slots.
-- Start with a greedy assignment ordered by class priority, backtracking when
-  a class can't be placed.
-- If greedy + backtracking proves insufficient, upgrade to a proper CSP
-  solver. Keep the solver a pure, well-tested module with no UI dependencies
-  so it can be swapped/upgraded independently.
-- If no valid schedule exists, report *why*, specifically and per class —
-  "Rec Gym 1 needs 40 min of events but its window is only 30 min", or
-  "Tumble Trak is over-subscribed: 5 classes need 200 min on it between
-  16:00–18:00, which only fits 120 min" — rather than failing silently.
-  These messages are the user's only feedback when their structure doesn't
-  work, so they have to name the class or the event at fault.
-- Generation should feel instant (<2s) for realistic sizes: ~16 classes, ~8
-  events, a 4-hour window at 5-minute rows.
+- Reuse the single-week block solver per week: a class's events for a week
+  become a warm-up (leads), the drawn middle events (any order), and a
+  cool-down (closes), placed on the shared clock without exclusive
+  collisions. A coverage layer decides *which* events each week, spreading
+  under-covered events to later weeks.
+- Keep the solver a pure, deterministic (by seed) module with no UI
+  dependencies, so it can be swapped or upgraded independently.
+- When a week can't place everything, drop the best-covered events and flag
+  the shortfall, rather than failing the whole plan.
+- Report *why* specifically, per class and per event — "Rec Beams: Rec Gym 1
+  only gets 1 of 2 required visits" or "Tumble Trak is over-subscribed" —
+  never a bare failure.
+- A 4-week plan for ~16 classes should generate in a couple of seconds.
 
-**Test the solver hard.** Property-based tests: no double-bookings, all
-required events fulfilled, nothing escapes its class window, output
-deterministic given a seed. Include fixture scenarios: the impossible
-window, the exactly-tight window, the trivial session.
+**Test the solver hard.** Property-based tests: no exclusive event
+double-booked in any week; every class meets each eligible event's minimum
+when feasible; a locked week is never altered on regenerate; shared events
+are allowed to overlap; output deterministic given a seed. Fixture
+scenarios: comfortably-solvable, tightly-contested (coverage impossible →
+flags), single-class trivial.
 
-## Features by Phase
+## Features by Phase## Features by Phase
 
 > **Status:** Phases 1–3 below are implemented — v1 is feature-complete.
 > Remaining ideas live under "Later / nice-to-have".
@@ -308,7 +321,7 @@ model before the solver is built.
   handle real width: a session routinely has 16+ classes, so the sheet tiles
   across pages with the time column repeating on every page.
 - Excel export (shipped early, with the manual grid): download a session's
-  schedule as .xlsx mirroring the on-screen layout — **classes as columns,
+  **four-week plan** as .xlsx (a sheet per week) mirroring the on-screen layout — **classes as columns,
   time as rows**, each occupied cell solid-filled with its event's color,
   event and coach names in the cell, and white/black text chosen
   automatically from the fill's brightness so it stays readable when

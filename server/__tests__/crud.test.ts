@@ -22,9 +22,14 @@ describe('events CRUD', () => {
     const created = await request(app)
       .post('/api/events')
       .set('Cookie', cookie)
-      .send({ name: 'Vault', capacity: 1 })
+      .send({ name: 'Vault', duration: 10 })
       .expect(201)
-    expect(created.body.event).toMatchObject({ name: 'Vault', capacity: 1, active: true })
+    expect(created.body.event).toMatchObject({
+      name: 'Vault',
+      duration: 10,
+      shared: false,
+      active: true,
+    })
     const id = created.body.event.id
 
     const list = await request(app).get('/api/events').set('Cookie', cookie)
@@ -33,9 +38,9 @@ describe('events CRUD', () => {
     const updated = await request(app)
       .put(`/api/events/${id}`)
       .set('Cookie', cookie)
-      .send({ name: 'Vault', capacity: 2, active: false })
+      .send({ name: 'Vault', duration: 15, shared: true, active: false })
       .expect(200)
-    expect(updated.body.event).toMatchObject({ capacity: 2, active: false })
+    expect(updated.body.event).toMatchObject({ duration: 15, shared: true, active: false })
 
     await request(app).delete(`/api/events/${id}`).set('Cookie', cookie).expect(204)
     const after = await request(app).get('/api/events').set('Cookie', cookie)
@@ -88,36 +93,44 @@ describe('events CRUD', () => {
     expect(updated.body.event.color).toBe('#59A14F')
   })
 
-  it('treats a missing or null capacity as no limit', async () => {
+  it('defaults new events to exclusive, and toggles shared', async () => {
     const created = await request(app)
       .post('/api/events')
       .set('Cookie', cookie)
       .send({ name: 'Open Gym' })
       .expect(201)
-    expect(created.body.event.capacity).toBeNull()
+    // Exclusive by default: only one class may be on the event at a time.
+    expect(created.body.event.shared).toBe(false)
     const id = created.body.event.id
 
-    const limited = await request(app)
+    const shared = await request(app)
       .put(`/api/events/${id}`)
       .set('Cookie', cookie)
-      .send({ name: 'Open Gym', capacity: 3 })
+      .send({ name: 'Open Gym', shared: true })
       .expect(200)
-    expect(limited.body.event.capacity).toBe(3)
+    expect(shared.body.event.shared).toBe(true)
 
-    const cleared = await request(app)
+    const exclusive = await request(app)
       .put(`/api/events/${id}`)
       .set('Cookie', cookie)
-      .send({ name: 'Open Gym', capacity: null })
+      .send({ name: 'Open Gym', shared: false })
       .expect(200)
-    expect(cleared.body.event.capacity).toBeNull()
+    expect(exclusive.body.event.shared).toBe(false)
   })
 
-  it('validates capacity and name', async () => {
+  it('validates duration and name', async () => {
     await request(app).post('/api/events').set('Cookie', cookie).send({ name: '' }).expect(400)
+    // Below the 5-minute floor.
     await request(app)
       .post('/api/events')
       .set('Cookie', cookie)
-      .send({ name: 'Vault', capacity: 0 })
+      .send({ name: 'Vault', duration: 0 })
+      .expect(400)
+    // Off the 5-minute axis.
+    await request(app)
+      .post('/api/events')
+      .set('Cookie', cookie)
+      .send({ name: 'Vault', duration: 12 })
       .expect(400)
   })
 
@@ -129,7 +142,7 @@ describe('events CRUD', () => {
       .expect(404)
   })
 
-  it('deleting an event scrubs it from coach specialties and class requirements', async () => {
+  it('deleting an event scrubs it from coach specialties and class eligibility', async () => {
     const event = (
       await request(app).post('/api/events').set('Cookie', cookie).send({ name: 'Beam' })
     ).body.event
@@ -143,7 +156,7 @@ describe('events CRUD', () => {
       await request(app)
         .post('/api/classes')
         .set('Cookie', cookie)
-        .send({ name: 'Level 3', requiredEvents: [{ eventId: event.id, duration: 30 }] })
+        .send({ name: 'Level 3', eligibleEventIds: [event.id] })
     ).body.class
 
     await request(app).delete(`/api/events/${event.id}`).set('Cookie', cookie).expect(204)
@@ -151,7 +164,9 @@ describe('events CRUD', () => {
     const coaches = await request(app).get('/api/coaches').set('Cookie', cookie)
     expect(coaches.body.coaches.find((c: { id: number }) => c.id === coach.id).specialties).toEqual([])
     const classes = await request(app).get('/api/classes').set('Cookie', cookie)
-    expect(classes.body.classes.find((c: { id: number }) => c.id === cls.id).requiredEvents).toEqual([])
+    expect(
+      classes.body.classes.find((c: { id: number }) => c.id === cls.id).eligibleEventIds,
+    ).toEqual([])
   })
 })
 
@@ -195,36 +210,71 @@ describe('coaches CRUD', () => {
 })
 
 describe('classes CRUD', () => {
-  it('stores required events with durations', async () => {
+  it('stores eligibility, period, and warm-up/cool-down anchors', async () => {
+    // The warm-up/cool-down anchors are real foreign keys, so seed events.
+    const ev = async (name: string) =>
+      (await request(app).post('/api/events').set('Cookie', cookie).send({ name })).body.event.id
+    const [e1, e2, e3, warm, cool] = [
+      await ev('A'),
+      await ev('B'),
+      await ev('C'),
+      await ev('Warm-up'),
+      await ev('Stretch'),
+    ]
+
     const created = await request(app)
       .post('/api/classes')
       .set('Cookie', cookie)
       .send({
         name: 'Xcel Silver',
         priority: 2,
-        requiredEvents: [
-          { eventId: 1, duration: 30 },
-          { eventId: 2, duration: 15 },
-        ],
+        eligibleEventIds: [e1, e2, e3],
+        periodMinutes: 60,
+        warmupEventId: warm,
+        warmupMinutes: 10,
+        cooldownEventId: cool,
+        cooldownMinutes: 10,
       })
       .expect(201)
-    expect(created.body.class.requiredEvents).toHaveLength(2)
-    expect(created.body.class.priority).toBe(2)
+    expect(created.body.class).toMatchObject({
+      eligibleEventIds: [e1, e2, e3],
+      periodMinutes: 60,
+      warmupEventId: warm,
+      warmupMinutes: 10,
+      cooldownEventId: cool,
+      cooldownMinutes: 10,
+      priority: 2,
+    })
   })
 
-  it('rejects malformed required events', async () => {
+  it('rejects a warm-up event without a length', async () => {
     await request(app)
       .post('/api/classes')
       .set('Cookie', cookie)
-      .send({ name: 'X', requiredEvents: [{ eventId: 1 }] })
+      .send({ name: 'X', warmupEventId: 1 })
       .expect(400)
   })
 
-  it('rejects required-event durations that are not multiples of 5', async () => {
+  it('rejects a period that is not a multiple of 5', async () => {
     await request(app)
       .post('/api/classes')
       .set('Cookie', cookie)
-      .send({ name: 'X', requiredEvents: [{ eventId: 1, duration: 22 }] })
+      .send({ name: 'X', periodMinutes: 22 })
+      .expect(400)
+  })
+
+  it('rejects a warm-up and cool-down that leave no time in the period', async () => {
+    await request(app)
+      .post('/api/classes')
+      .set('Cookie', cookie)
+      .send({
+        name: 'X',
+        periodMinutes: 20,
+        warmupEventId: 1,
+        warmupMinutes: 15,
+        cooldownEventId: 2,
+        cooldownMinutes: 10,
+      })
       .expect(400)
   })
 
